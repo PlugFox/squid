@@ -1,0 +1,65 @@
+name: Deploy
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "[0-9]+.[0-9]+.[0-9]+*"
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    name: "🚀 Publish to pub.dev"
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      # Required to authenticate on pub.dev with OIDC, no token to store.
+      id-token: write
+    steps:
+      - name: 📦 Checkout the repo
+        uses: actions/checkout@v4
+
+      # Exchanges the GitHub OIDC token for a temporary pub.dev credential,
+      # which `flutter pub publish` picks up from the environment.
+      - name: 🎫 Setup Dart and the pub.dev credentials
+        uses: dart-lang/setup-dart@v1
+
+      - name: 🚂 Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: 3.38.0
+
+      - name: 👷 Install dependencies
+        timeout-minutes: 2
+        run: |
+          flutter config --no-cli-animations --no-analytics
+          flutter pub get
+
+      - name: 🔢 Check that the tag matches the version
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          VERSION="$(awk '/^version:/ {print $2; exit}' pubspec.yaml)"
+          if [ "$TAG" != "$VERSION" ]; then
+            echo "::error::Tag $TAG does not match version $VERSION of pubspec.yaml"
+            exit 1
+          fi
+
+      - name: 📈 Check for warnings
+        timeout-minutes: 2
+        run: |
+          dart format --set-exit-if-changed -o none lib/ test/
+          flutter analyze --fatal-infos --fatal-warnings lib/ test/
+
+      - name: 🧪 Unit & widget tests
+        timeout-minutes: 5
+        run: |
+          flutter test --concurrency=6 test/squid_test.dart
+
+      - name: 📤 Publish to pub.dev
+        timeout-minutes: 5
+        run: |
+          flutter pub publish --force

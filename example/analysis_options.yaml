@@ -1,0 +1,23 @@
+include: package:flutter_lints/flutter.yaml
+
+analyzer:
+  exclude:
+    - build/**
+    - android/**
+    - ios/**
+    - web/**
+    - windows/**
+    - macos/**
+    - linux/**
+  language:
+    strict-casts: true
+    strict-raw-types: true
+    strict-inference: true
+
+linter:
+  rules:
+    # An example is documented by its comments, not by dartdoc.
+    public_member_api_docs: false
+    sort_pub_dependencies: false
+    prefer_relative_imports: false
+    always_use_package_imports: true

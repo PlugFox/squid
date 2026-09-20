@@ -1,0 +1,43 @@
+name: squid
+description: "A simple, reliable and extensible declarative navigator for Flutter. The whole navigation is a plain list of routes you can rewrite at any moment."
+
+version: 0.1.0
+
+homepage: https://github.com/PlugFox/squid
+
+repository: https://github.com/PlugFox/squid
+
+issue_tracker: https://github.com/PlugFox/squid/issues
+
+funding:
+  - https://www.buymeacoffee.com/plugfox
+  - https://www.patreon.com/plugfox
+  - https://boosty.to/plugfox
+
+topics:
+  - navigation
+  - navigator
+  - router
+  - declarative
+  - guards
+
+platforms:
+  android:
+  ios:
+  linux:
+  macos:
+  web:
+  windows:
+
+environment:
+  sdk: ">=3.9.0 <4.0.0"
+  flutter: ">=3.35.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
