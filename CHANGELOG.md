@@ -15,6 +15,9 @@ All notable changes to this project will be documented in this file.
   as ordinary entries of the navigation stack.
 - `NavigationGuard` with the built-in `PriorityGuard`, `RootGuard`,
   `LimitGuard` and `GateGuard`.
+- `ContextGuard` — the rules that depend on the widget tree (the size of the
+  window, the theme, an inherited scope) re-run by themselves whenever what
+  they read changes.
 - `NavigationObserver` and `NavigationLogger`.
 - `NavigationTabsController` — several stacks side by side, cross tab
   navigation and automatic routing of the back button.

@@ -1,0 +1,31 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Example",
+      "type": "dart",
+      "request": "launch",
+      "program": "lib/main.dart",
+      "cwd": "${workspaceFolder}/example",
+      "env": {}
+    },
+    {
+      "name": "Tests (VM)",
+      "type": "dart",
+      "request": "launch",
+      "program": "test/squid_test.dart",
+      "console": "debugConsole",
+      "runTestsOnDevice": false,
+      "templateFor": "test",
+      "toolArgs": [
+        "--color",
+        "--reporter=expanded",
+        "--file-reporter=json:reports/tests.json",
+        "--coverage"
+      ],
+      "env": {
+        "ENVIRONMENT": "test"
+      }
+    }
+  ]
+}

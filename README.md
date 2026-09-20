@@ -22,6 +22,17 @@ and the guards that decide what the list is allowed to look like.
 
 ---
 
+## Table of contents
+
+- [Why](#why) · [Installation](#installation) · [Quick start](#quick-start)
+- [Routes](#routes) — [with parameters](#routes-with-parameters),
+  [dialogs and sheets](#dialogs-and-bottom-sheets)
+- [Navigating](#navigating) · [Guards](#guards) ·
+  [Observers](#observers) · [Tabs](#tabs)
+- [The back button](#the-back-button) · [Testing](#testing)
+- [Coming from octopus](#coming-from-octopus) ·
+  [Design notes](#design-notes)
+
 ## Why
 
 Most routers describe the navigation as a set of destinations and let the
