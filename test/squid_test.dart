@@ -1,3 +1,4 @@
+import 'back_button_test.dart' as back_button_test;
 import 'context_test.dart' as context_test;
 import 'controller_test.dart' as controller_test;
 import 'extensions_test.dart' as extensions_test;
@@ -26,4 +27,5 @@ void main() {
   pages_edge_test.main();
   routes_edge_test.main();
   tabs_edge_test.main();
+  back_button_test.main();
 }

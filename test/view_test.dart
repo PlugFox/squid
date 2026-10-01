@@ -7,6 +7,29 @@ import 'package:squid/squid.dart';
 import 'src/routes.dart';
 
 void main() => group('view', () {
+  testWidgets('a page reading the context is built again when it changes', (
+    tester,
+  ) async {
+    final controller = NavigationController(<NavigationRoute>[
+      const _TitledRoute(),
+    ]);
+    addTearDown(controller.dispose);
+
+    Widget app(String title) => MaterialApp(
+      home: _Title(
+        title: title,
+        child: NavigationView(controller: controller),
+      ),
+    );
+
+    await tester.pumpWidget(app('first'));
+    expect(find.text('title:first'), findsOneWidget);
+
+    await tester.pumpWidget(app('second'));
+    await tester.pumpAndSettle();
+    expect(find.text('title:second'), findsOneWidget);
+  });
+
   Future<void> pumpView(WidgetTester tester, NavigationController controller) =>
       tester.pumpWidget(
         MaterialApp(home: NavigationView(controller: controller)),
@@ -613,4 +636,33 @@ class _WidthGuard extends ContextGuard {
       MediaQuery.sizeOf(context).width > 0
       ? stack.withRoute(Routes.settings)
       : stack;
+}
+
+class _Title extends InheritedWidget {
+  const _Title({required this.title, required super.child});
+
+  final String title;
+
+  @override
+  bool updateShouldNotify(_Title oldWidget) => oldWidget.title != title;
+}
+
+final class _TitledRoute with NavigationRoute {
+  const _TitledRoute();
+
+  @override
+  String get name => 'titled';
+
+  @override
+  Page<Object?> page(BuildContext context) {
+    final title = context.dependOnInheritedWidgetOfExactType<_Title>()!.title;
+    return MaterialPage<Object?>(
+      key: key,
+      name: name,
+      child: Text('title:$title'),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) => const SizedBox.shrink();
 }

@@ -1,7 +1,7 @@
 name: squid
 description: "A simple, reliable and extensible declarative navigator for Flutter. The whole navigation is a plain list of routes you can rewrite at any moment."
 
-version: 0.1.0
+version: 0.1.1
 
 homepage: https://github.com/PlugFox/squid
 

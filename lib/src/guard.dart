@@ -38,6 +38,22 @@ typedef NavigationGuardCallback =
 /// * a different stack — the navigation is redirected;
 /// * `controller.stack` — the change is cancelled.
 ///
+/// A route closed by the user — a swipe back, a tap on the barrier of a
+/// dialog — has already left the navigator when the guards see its removal.
+/// A guard keeping it brings back a new instance of the route, with a new
+/// state. To prevent the user from closing a route, use a [PopScope] or the
+/// `canPop` of its page instead.
+///
+/// While a change is validated, `controller.stack` is the stack committed
+/// before it. The only exception is the validation of the initial stack in
+/// the constructor, where `controller.stack` is already the requested stack.
+///
+/// A guard should express a redirect through the stack it returns. A
+/// `controller.pop`, `controller.removeKey` or `controller.change` called
+/// from a guard does not touch the stack being validated: it is queued and
+/// applied to the stack committed after the current change, and is validated
+/// by the guards in turn.
+///
 /// Guards are applied in the order they are declared, each one receiving the
 /// result of the previous one. An exception thrown by a guard is reported
 /// to `FlutterError` and the guard is skipped, so a broken rule cannot break

@@ -9,6 +9,15 @@ import 'package:squid/src/route.dart';
 /// new stack has been accepted and is meant for the side effects — analytics,
 /// logging, the title of the application window and so on.
 ///
+/// The callbacks are usually invoked synchronously, right after the commit.
+/// A change made during the build — e.g. by a `ContextGuard` reacting to a
+/// new size of the window — is reported at the end of the frame instead,
+/// because an observer may mark widgets dirty. In that case all the
+/// listeners of the controller are notified before the observer events,
+/// the events are delivered in the order of the commits, and
+/// `controller.stack` may already be newer than the `next` stack of the
+/// event.
+///
 /// ```dart
 /// class AnalyticsObserver with NavigationObserver {
 ///   AnalyticsObserver(this._analytics);

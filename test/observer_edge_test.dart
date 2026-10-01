@@ -179,8 +179,8 @@ void main() => group('observer edge cases', () {
       );
       expect(
         first.events,
-        equals(<String>['change']),
-        reason: 'its own onAdd is skipped after the throw',
+        equals(<String>['change', 'add:catalog']),
+        reason: 'its own onAdd still runs after the throw',
       );
       expect(second.events, equals(<String>['change', 'add:catalog']));
       expect(third.events, equals(<String>['change', 'add:catalog']));
@@ -199,8 +199,7 @@ void main() => group('observer edge cases', () {
       expect(errors, hasLength(3), reason: 'one per throwing callback');
     });
 
-    test('a throw from onAdd skips the remaining routes of that observer '
-        'only', () {
+    test('a throw from onAdd does not skip the remaining routes', () {
       final broken = _ThrowingObserver(_Stage.add);
       final recording = _RecordingObserver();
       final controller = NavigationController(
@@ -210,12 +209,15 @@ void main() => group('observer edge cases', () {
       addTearDown(controller.dispose);
 
       controller.pushAll(<NavigationRoute>[Routes.catalog, Routes.settings]);
-      expect(broken.events, equals(<String>['change', 'add:catalog']));
+      expect(
+        broken.events,
+        equals(<String>['change', 'add:catalog', 'add:settings']),
+      );
       expect(
         recording.events,
         equals(<String>['change', 'add:catalog', 'add:settings']),
       );
-      expect(errors, hasLength(1));
+      expect(errors, hasLength(2), reason: 'one per throwing callback');
       expect(controller.length, equals(3));
     });
   });

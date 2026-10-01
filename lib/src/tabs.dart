@@ -61,6 +61,9 @@ class NavigationTabsController<K extends Object>
         ..joinGroup(this)
         ..addListener(notifyListeners);
     }
+    // The views of the controllers may already be mounted: an inactive tab
+    // must stop claiming the back button.
+    _didChangeGroup();
   }
 
   /// The controllers of all the tabs, in their declaration order.
@@ -120,6 +123,7 @@ class NavigationTabsController<K extends Object>
       ..add(_active);
     _active = tab;
     notifyListeners();
+    _didChangeGroup();
   }
 
   /// Returns to the previously selected tab.
@@ -129,7 +133,16 @@ class NavigationTabsController<K extends Object>
     if (_history.isEmpty) return false;
     _active = _history.removeLast();
     notifyListeners();
+    _didChangeGroup();
     return true;
+  }
+
+  /// Lets the views of the tabs report to the platform whether the back
+  /// button is handled, e.g. by returning to the previous tab.
+  void _didChangeGroup() {
+    for (final controller in tabs.values) {
+      controller.didChangeGroup();
+    }
   }
 
   /// Tries to close the visible route of the active tab, and returns to the
@@ -146,14 +159,19 @@ class NavigationTabsController<K extends Object>
   bool popGroupMember() => back();
 
   @override
+  bool get canPopGroupMember => _history.isNotEmpty;
+
+  @override
   void dispose() {
+    _history.clear();
     for (final controller in tabs.values) {
+      // A view outliving the tabs must stop returning to the previous tab.
       controller
         ..removeListener(notifyListeners)
-        ..leaveGroup(this);
+        ..leaveGroup(this)
+        ..didChangeGroup();
       if (disposeTabs) controller.dispose();
     }
-    _history.clear();
     super.dispose();
   }
 
