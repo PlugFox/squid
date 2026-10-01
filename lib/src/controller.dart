@@ -106,6 +106,9 @@ class NavigationController
     // reading `controller.stack` sees the stack it is validating.
     _stack = UnmodifiableListView<NavigationRoute>(candidate);
     final next = _dedupe(_runGuards(candidate));
+    // A guard may dispose the controller, which must not subscribe it to
+    // the revalidation afterwards.
+    if (_disposed) return;
     if (next.isEmpty) {
       throw ArgumentError.value(
         initial,
@@ -135,6 +138,10 @@ class NavigationController
       <LocalKey, Completer<Object?>>{};
   final Map<LocalKey, Object?> _results = <LocalKey, Object?>{};
 
+  /// Results of the [maybePop] calls postponed until the current change is
+  /// committed, completed with `false` when the queue is dropped.
+  final List<Completer<bool>> _pendingPops = <Completer<bool>>[];
+
   /// Maximum number of changes requested from within a single transition.
   ///
   /// The changes over the limit are reported to `FlutterError` and dropped:
@@ -152,6 +159,10 @@ class NavigationController
   /// synchronously, see [revalidateDuringBuild].
   bool _deferNotifications = false;
   bool _notificationScheduled = false;
+
+  /// Whether a change committed during the build waits for the listeners to
+  /// be notified at the end of the frame.
+  bool _listenersPending = false;
 
   /// Transitions waiting to be reported to the [observers] at the end of the
   /// frame, see [revalidateDuringBuild].
@@ -264,6 +275,7 @@ class NavigationController
       _queue = null;
       _processing = false;
       _settleResults();
+      _settlePendingPops();
     }
   }
 
@@ -308,9 +320,10 @@ class NavigationController
   /// `null` when the route is closed in any other way: a swipe back, a tap on
   /// the barrier of a dialog, the system back button or a guard.
   ///
-  /// Only one caller can wait for a route: pushing a route with the same
-  /// [NavigationRoute.key] again completes the previous future with `null`
-  /// right away, even though the route stays on the screen.
+  /// Only one caller can wait for a route: calling [pushForResult] again with
+  /// the same [NavigationRoute.key] completes the previous future with `null`
+  /// right away, even though the route stays on the screen. A plain [push] of
+  /// that route keeps the previous future waiting.
   ///
   /// ```dart
   /// final confirmed =
@@ -339,7 +352,8 @@ class NavigationController
   ///
   /// When called from a guard, an observer or a listener, the pop is
   /// postponed until the current change is committed and `true` only means
-  /// that it has been scheduled.
+  /// that it has been scheduled: the stack it applies to is not known yet,
+  /// and the pop does nothing if that stack has a single route.
   bool pop([Object? result]) {
     if (!_processing && _stack.length < 2) return false;
     // The result is bound to the route that is actually removed, which is
@@ -360,7 +374,9 @@ class NavigationController
   /// first. When the stack cannot be popped and the controller belongs to a
   /// group of tabs, the group switches back to the previously selected tab.
   ///
-  /// Returns `true` when the back navigation was handled.
+  /// Returns `true` when the back navigation was handled. When called from a
+  /// guard, an observer or a listener, the decision is made against the
+  /// stack the pop applies to, once the current change is committed.
   Future<bool> maybePop() async {
     if (_disposed) return false;
     final group = _group;
@@ -368,10 +384,23 @@ class NavigationController
     final navigator = this.navigator;
     if (navigator != null) {
       if (await navigator.maybePop()) return true;
-    } else if (pop()) {
+    } else if (_processing ? await _popPending() : pop()) {
       return true;
     }
     return group?.popGroupMember() ?? false;
+  }
+
+  /// Queues a pop after the current change and completes with whether it
+  /// has found a route to remove.
+  Future<bool> _popPending() {
+    final completer = Completer<bool>();
+    _pendingPops.add(completer);
+    change((stack) {
+      final popped = stack.length > 1;
+      if (!completer.isCompleted) completer.complete(popped);
+      return popped ? (stack..removeLast()) : stack;
+    });
+    return completer.future;
   }
 
   /// Removes the routes from the top of the stack until [predicate] returns
@@ -398,7 +427,8 @@ class NavigationController
   /// Returns `false` when the stack has no such route. When called from a
   /// guard, an observer or a listener, the removal is postponed until the
   /// current change is committed and `true` only means that it has been
-  /// scheduled.
+  /// scheduled: the removal does nothing if the stack it applies to has no
+  /// such route.
   bool removeKey(LocalKey key, [Object? result]) {
     if (!_processing && !containsKey(key)) return false;
     change((stack) {
@@ -499,6 +529,8 @@ class NavigationController
       );
       _completeRemoved(previous, next);
       _notifyListeners();
+      // A listener may dispose the controller while it is being notified.
+      if (_disposed) return;
       _notifyObservers(previous, next);
     } finally {
       // A result belongs to the change that set it: the result of a pop
@@ -511,6 +543,8 @@ class NavigationController
   NavigationStack _runGuards(NavigationStack candidate) {
     var next = candidate;
     for (final guard in guards) {
+      // A guard may dispose the controller, e.g. on sign out.
+      if (_disposed) break;
       try {
         next = guard(this, List<NavigationRoute>.of(next));
       } on Object catch (error, stackTrace) {
@@ -570,6 +604,7 @@ class NavigationController
 
   void _notifyListeners() {
     if (!_deferNotifications) return notifyListeners();
+    _listenersPending = true;
     _scheduleNotifications();
   }
 
@@ -579,16 +614,28 @@ class NavigationController
     _notificationScheduled = true;
     SchedulerBinding.instance
       ..addPostFrameCallback((_) {
-        _notificationScheduled = false;
         if (_disposed) return;
-        notifyListeners();
-        final events = List<(NavigationStack, NavigationStack)>.of(
-          _deferredObserverEvents,
-        );
-        _deferredObserverEvents.clear();
-        for (final (previous, next) in events) {
-          if (_disposed) return;
-          _dispatchObservers(previous, next);
+        // The flag stays set while the listeners and the observers are
+        // notified: the observer event of a change they make is appended to
+        // the queue drained below instead of scheduling another callback,
+        // which would notify the listeners once more for nothing.
+        try {
+          _listenersPending = false;
+          notifyListeners();
+          // Every event stays in the queue until it is dispatched, so the
+          // change made by an observer is reported after the pending ones
+          // instead of in the middle of them, see [_notifyObservers].
+          while (!_disposed && _deferredObserverEvents.isNotEmpty) {
+            final (previous, next) = _deferredObserverEvents.first;
+            _dispatchObservers(previous, next);
+            if (_disposed) return;
+            _deferredObserverEvents.removeAt(0);
+          }
+        } finally {
+          _notificationScheduled = false;
+          // Only a change deferred by the dispatch itself needs another
+          // callback: everything else has been reported by this one.
+          if (!_disposed && _listenersPending) _scheduleNotifications();
         }
       }, debugLabel: 'NavigationController.notifyListeners')
       ..ensureVisualUpdate();
@@ -596,10 +643,11 @@ class NavigationController
 
   /// Completes the futures of the routes that are not in the stack once all
   /// the queued changes have been committed, e.g. a [pushForResult] requested
-  /// from a listener and then rejected by a guard, and drops the results that
-  /// were not consumed by any removal.
+  /// from a listener and then rejected by a guard.
+  ///
+  /// The results that were not consumed by any removal are already dropped
+  /// by [_transition].
   void _settleResults() {
-    _results.clear();
     if (_completers.isEmpty) return;
     final keys = <LocalKey>{for (final route in _stack) route.key};
     final orphans = <Completer<Object?>>[];
@@ -613,13 +661,26 @@ class NavigationController
     }
   }
 
+  /// Completes the [maybePop] calls whose pop has been dropped with the
+  /// queue, e.g. because the controller has been disposed.
+  void _settlePendingPops() {
+    if (_pendingPops.isEmpty) return;
+    final pending = List<Completer<bool>>.of(_pendingPops);
+    _pendingPops.clear();
+    for (final completer in pending) {
+      if (!completer.isCompleted) completer.complete(false);
+    }
+  }
+
   void _notifyObservers(NavigationStack previous, NavigationStack next) {
     if (observers.isEmpty) return;
     if (!_deferNotifications && _deferredObserverEvents.isEmpty) {
       return _dispatchObservers(previous, next);
     }
     // An observer may mark widgets dirty, which is not allowed during the
-    // build: report the transition at the end of the frame, in order.
+    // build: report the transition at the end of the frame, in order. While
+    // older transitions wait in the queue, this one waits behind them, even
+    // when it is not made during the build.
     _deferredObserverEvents.add((previous, next));
     _scheduleNotifications();
   }

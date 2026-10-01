@@ -267,6 +267,43 @@ void main() => group('context', () {
     expect(find.text('observed:home'), findsOneWidget);
   });
 
+  testWidgets('observers see the build time changes in order when one of '
+      'them changes the stack', (tester) async {
+    final first = _TranscriptObserver(pushOnFirst: Routes.settings);
+    final second = _TranscriptObserver();
+    final controller = NavigationController(
+      <NavigationRoute>[Routes.home],
+      guards: <NavigationGuard>[const _AdaptiveGuard()],
+      observers: <NavigationObserver>[first, second],
+    );
+    addTearDown(controller.dispose);
+
+    var notifications = 0;
+    controller.addListener(() => notifications++);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MediaQuery(
+          data: const MediaQueryData(size: Size(800, 600)),
+          child: NavigationView(controller: controller),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+
+    // The guard adds the side pane while the view is built, the observers
+    // hear about it at the end of the frame, and the first one reacts.
+    const transcript = <String>[
+      'home -> home>_SidePaneRoute',
+      'home>_SidePaneRoute -> home>_SidePaneRoute>settings',
+    ];
+    expect(first.transcript, equals(transcript));
+    expect(second.transcript, equals(transcript));
+    expect(notifications, equals(2), reason: 'one per transition');
+    expect(find.text('screen:settings'), findsOneWidget);
+  });
+
   testWidgets('a page reading the stack follows a build time change '
       'in the same frame', (tester) async {
     final controller = NavigationController(
@@ -311,4 +348,28 @@ class _TopObserver with NavigationObserver {
     NavigationStack previous,
     NavigationStack next,
   ) => current.value = next.last.name;
+}
+
+/// Records every transition as `previous -> next`, and pushes [pushOnFirst]
+/// on the first one.
+class _TranscriptObserver with NavigationObserver {
+  _TranscriptObserver({this.pushOnFirst});
+
+  final NavigationRoute? pushOnFirst;
+
+  final List<String> transcript = <String>[];
+
+  static String _names(NavigationStack stack) =>
+      stack.map<String>((route) => route.name).join('>');
+
+  @override
+  void onChange(
+    NavigationController controller,
+    NavigationStack previous,
+    NavigationStack next,
+  ) {
+    transcript.add('${_names(previous)} -> ${_names(next)}');
+    final route = pushOnFirst;
+    if (route != null && transcript.length == 1) controller.push(route);
+  }
 }

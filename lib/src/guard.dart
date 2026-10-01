@@ -48,6 +48,12 @@ typedef NavigationGuardCallback =
 /// before it. The only exception is the validation of the initial stack in
 /// the constructor, where `controller.stack` is already the requested stack.
 ///
+/// A guard should express a redirect through the stack it returns. A
+/// `controller.pop`, `controller.removeKey` or `controller.change` called
+/// from a guard does not touch the stack being validated: it is queued and
+/// applied to the stack committed after the current change, and is validated
+/// by the guards in turn.
+///
 /// Guards are applied in the order they are declared, each one receiving the
 /// result of the previous one. An exception thrown by a guard is reported
 /// to `FlutterError` and the guard is skipped, so a broken rule cannot break
