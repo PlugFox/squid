@@ -5,21 +5,33 @@ All notable changes to this project will be documented in this file.
 ## 0.1.1
 
 - **Fixed**: on Android with the predictive back gesture, the back button
-  no longer closes the application when a `NavigationTabsController` can
-  return to the previous tab or a `NavigationView` has its own
-  `onBackButtonPressed`: the view tells the platform that the framework
-  handles the press, and an inactive tab no longer speaks for the visible
-  one.
+  no longer closes the application while the framework can handle the
+  press. The top level views report one state for the whole application:
+  a route to close, a visible nested view that can go back, a `PopScope`
+  blocking the visible route, a previous tab of a
+  `NavigationTabsController` or an `onBackButtonPressed` of the view. A
+  nested view reports again when its route becomes current again, an
+  inactive tab no longer speaks for the visible one, and a view with
+  `interceptBackButton: false` no longer claims the press.
+- **Fixed**: a `NavigationTabsController` reports the back button when it
+  is created around mounted views and when it is disposed, so no stale
+  claim of a previous tab remains.
 - **Fixed**: a page built from the context of the view (the locale, the
   theme, an inherited scope read in `NavigationRoute.page`) is built again
-  when that context changes instead of being taken from the cache.
-- **Fixed**: the default `key` of a route escapes `%`, `&` and `=` in the
-  arguments and writes a `null` argument without a value, so different
-  arguments, e.g. `{'q': 'a&b=c'}` and `{'q': 'a', 'b': 'c'}`, or `null` and
-  `'null'`, no longer produce the same key.
+  when that context changes instead of being taken from the cache. A guard
+  reading the context, e.g. the size of the window, no longer rebuilds the
+  pages.
+- **Fixed**: the default `key` of a route escapes `%`, `&`, `=` and `?` in
+  the name and in the arguments and writes a `null` argument without a
+  value, so different routes, e.g. `{'q': 'a&b=c'}` and
+  `{'q': 'a', 'b': 'c'}`, `null` and `'null'`, or the name `'a?b'` and the
+  name `'a'` with `{'b': null}`, no longer produce the same key.
 - **Fixed**: observers are notified at the end of the frame, together with
   the listeners, when a `ContextGuard` changes the stack during the build,
-  so an observer calling `setState` no longer throws.
+  so an observer calling `setState` no longer throws. The events keep
+  their order when an observer changes the stack while they are delivered,
+  and a change made by a listener at that moment no longer notifies the
+  listeners once more on the next frame.
 - **Fixed**: an exception in one callback of an observer no longer swallows
   the remaining events of the same transition for that observer.
 - **Fixed**: a guard returning an empty stack is reported to `FlutterError`
@@ -28,19 +40,27 @@ All notable changes to this project will be documented in this file.
 - **Fixed**: `pop` and `removeKey` called from a guard, an observer or a
   listener are postponed instead of being checked against the stack that is
   about to change, e.g. `push(route)` followed by `remove(route)`.
-- **Fixed**: the result of a `pop` cancelled by a guard is no longer passed
-  to a later removal of the same route.
-- **Fixed**: a guard disposing the controller no longer leads to a
-  notification of a disposed controller.
+  `maybePop` called from there decides against the stack it applies to and
+  no longer reports a press as handled when nothing is popped.
+- **Fixed**: the result of a `pop` cancelled by a guard is dropped as soon
+  as the guard cancels it, instead of waiting for the end of the queued
+  changes.
+- **Fixed**: a guard can dispose the controller: the remaining guards do
+  not run, the observers are not notified, and a controller disposed during
+  its initial validation does not subscribe to `revalidate`. Observers are
+  also not notified when a listener disposes the controller.
 - **Docs**: a guard keeping a route closed by the user brings back a new
   instance of it, use a `PopScope` to prevent the closing.
 - **Docs**: the name of a class route is minified in an obfuscated build,
   routes compare by instance in a plain `List`, overridden `tags` must keep
-  `kModalTag`, `pushForResult` completes the previous waiter of the same
-  route with `null`, `controller.stack` while the guards run.
-- **CI**: a manual publication must start from the tag of the version, the
-  pub cache depends on the pubspecs, a `.pubignore` keeps the development
-  files out of the package.
+  `kModalTag`, calling `pushForResult` again with the same key completes
+  the previous waiter with `null`, `controller.stack` while the guards run,
+  changes made from a guard are queued, observer events may be delivered
+  at the end of the frame, what the default `key` guarantees.
+- **CI**: a manual publication must start from the tag of the version and
+  be enabled on pub.dev, the pub cache depends on the pubspecs, the Flutter
+  version and the week and covers the example, a `.pubignore` keeps the
+  development files out of the package.
 
 ## 0.1.0
 
