@@ -61,6 +61,9 @@ class NavigationTabsController<K extends Object>
         ..joinGroup(this)
         ..addListener(notifyListeners);
     }
+    // The views of the controllers may already be mounted: an inactive tab
+    // must stop claiming the back button.
+    _didChangeGroup();
   }
 
   /// The controllers of all the tabs, in their declaration order.
@@ -160,13 +163,15 @@ class NavigationTabsController<K extends Object>
 
   @override
   void dispose() {
+    _history.clear();
     for (final controller in tabs.values) {
+      // A view outliving the tabs must stop returning to the previous tab.
       controller
         ..removeListener(notifyListeners)
-        ..leaveGroup(this);
+        ..leaveGroup(this)
+        ..didChangeGroup();
       if (disposeTabs) controller.dispose();
     }
-    _history.clear();
     super.dispose();
   }
 
