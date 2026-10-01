@@ -105,4 +105,30 @@ void main() => group('example', () {
     expect(pops, equals(15));
     expect(find.text('Catalog'), findsOneWidget);
   });
+
+  testWidgets('popModals closes the declarative and the imperative popups', (
+    tester,
+  ) async {
+    Authentication.instance.signIn();
+    await tester.pumpWidget(const App());
+    await tester.pumpAndSettle();
+
+    // A declarative sheet...
+    await tester.tap(find.byIcon(Icons.filter_list));
+    await tester.pumpAndSettle();
+    // ...and an imperative dialog above it.
+    await tester.tap(find.text('Reset'));
+    await tester.pumpAndSettle();
+    expect(find.text('Filters'), findsOneWidget);
+    expect(find.text('Reset the filters?'), findsOneWidget);
+
+    await tester.tap(find.text('Reset and close'));
+    await tester.pumpAndSettle();
+    expect(find.text('Reset the filters?'), findsNothing);
+    expect(find.text('Filters'), findsNothing);
+    expect(find.text('Catalog'), findsOneWidget);
+
+    // Nothing is left in the stack: the back button has nothing to close.
+    expect(await tester.binding.handlePopRoute(), isFalse);
+  });
 });

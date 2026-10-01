@@ -1,4 +1,5 @@
 import 'package:example/src/authentication.dart';
+import 'package:example/src/navigation.dart';
 import 'package:example/src/routes.dart';
 import 'package:example/src/tabs_scope.dart';
 import 'package:flutter/material.dart';
@@ -18,7 +19,7 @@ class CatalogScreen extends StatelessWidget {
           icon: const Icon(Icons.filter_list),
           // A bottom sheet is opened by changing the stack, not by awaiting
           // an imperative `showModalBottomSheet`.
-          onPressed: () => context.navigation.push(const FiltersRoute()),
+          onPressed: () => context.nav.push(const FiltersRoute()),
         ),
       ],
     ),
@@ -27,7 +28,7 @@ class CatalogScreen extends StatelessWidget {
       itemBuilder: (context, index) => ListTile(
         leading: CircleAvatar(child: Text('$index')),
         title: Text('Product #$index'),
-        onTap: () => context.navigation.push(ProductRoute(index)),
+        onTap: () => context.nav.push(ProductRoute(index)),
       ),
     ),
   );
@@ -56,7 +57,7 @@ class ProductScreen extends StatelessWidget {
           ),
           // Deep navigation: every product opens the next one.
           TextButton(
-            onPressed: () => context.navigation.push(ProductRoute(id + 1)),
+            onPressed: () => context.nav.push(ProductRoute(id + 1)),
             child: Text('Open product #${id + 1}'),
           ),
         ],
@@ -109,7 +110,7 @@ class AccountScreen extends StatelessWidget {
         spacing: 16,
         children: <Widget>[
           FilledButton(
-            onPressed: () => context.navigation.push(Routes.settings),
+            onPressed: () => context.nav.push(Routes.settings),
             child: const Text('Settings'),
           ),
           OutlinedButton(
@@ -176,8 +177,29 @@ class FiltersView extends StatelessWidget {
           Text('Filters', style: Theme.of(context).textTheme.titleLarge),
           const Text('The sheet is a route: try the system back button'),
           FilledButton(
-            onPressed: () => context.navigation.pop(),
+            onPressed: () => context.nav.pop(),
             child: const Text('Apply'),
+          ),
+          TextButton(
+            // An imperative dialog above a declarative sheet: popModals
+            // closes both of them with a single call.
+            onPressed: () => showDialog<void>(
+              context: context,
+              // The dialog is opened on the root navigator of the
+              // application, above every NavigationView: there is no
+              // controller in its context, so the context of the sheet
+              // is used instead.
+              builder: (_) => AlertDialog(
+                content: const Text('Reset the filters?'),
+                actions: <Widget>[
+                  TextButton(
+                    onPressed: () => context.nav.popModals(),
+                    child: const Text('Reset and close'),
+                  ),
+                ],
+              ),
+            ),
+            child: const Text('Reset'),
           ),
         ],
       ),

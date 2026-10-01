@@ -1,4 +1,5 @@
 import 'package:example/src/authentication.dart';
+import 'package:example/src/deep_links.dart';
 import 'package:example/src/routes.dart';
 import 'package:example/src/tabs_scope.dart';
 import 'package:flutter/foundation.dart';
@@ -19,7 +20,7 @@ class App extends StatefulWidget {
   State<App> createState() => _AppState();
 }
 
-class _AppState extends State<App> {
+class _AppState extends State<App> with WidgetsBindingObserver {
   late final NavigationTabsController<AppTab> _tabs;
 
   @override
@@ -60,12 +61,33 @@ class _AppState extends State<App> {
           ),
       },
     );
+
+    // The link the application has been launched with.
+    final initial = initialDeepLink();
+    if (initial != null) _openDeepLink(initial);
+    // The links that arrive while the application is running.
+    WidgetsBinding.instance.addObserver(this);
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _tabs.dispose();
     super.dispose();
+  }
+
+  @override
+  Future<bool> didPushRouteInformation(RouteInformation routeInformation) =>
+      SynchronousFuture<bool>(_openDeepLink(routeInformation.uri));
+
+  /// Returns `false` for an unknown link, so that the platform can handle it
+  /// instead, e.g. open it in the browser.
+  bool _openDeepLink(Uri uri) {
+    // Any of the three parsers of `deep_links.dart` fits here.
+    final link = parseDeepLinkWithSwitch(uri);
+    if (link == null) return false;
+    openDeepLink(_tabs, link);
+    return true;
   }
 
   static NavigationRoute _root(AppTab tab) => switch (tab) {
@@ -73,6 +95,11 @@ class _AppState extends State<App> {
     AppTab.cart => Routes.cart,
     AppTab.account => Routes.account,
   };
+
+  late final Widget _home = AppTabsScope(
+    tabs: _tabs,
+    child: const _HomeScreen(),
+  );
 
   @override
   Widget build(BuildContext context) => MaterialApp(
@@ -86,7 +113,14 @@ class _AppState extends State<App> {
       colorSchemeSeed: Colors.teal,
       brightness: Brightness.dark,
     ),
-    home: AppTabsScope(tabs: _tabs, child: const _HomeScreen()),
+    // The deep link is handled by the controllers, not by `MaterialApp`:
+    // without this callback it would try to open the link as a named route
+    // and report that there is no such route.
+    onGenerateInitialRoutes: (_) => <Route<void>>[
+      MaterialPageRoute<void>(builder: (_) => _home),
+    ],
+    // No named routes: the navigation lives in the controllers.
+    onGenerateRoute: (_) => null,
   );
 }
 

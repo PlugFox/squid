@@ -29,7 +29,9 @@ and the guards that decide what the list is allowed to look like.
   [dialogs and sheets](#dialogs-and-bottom-sheets)
 - [Navigating](#navigating) · [Guards](#guards) ·
   [Observers](#observers) · [Tabs](#tabs)
-- [The back button](#the-back-button) · [Testing](#testing)
+- [The back button](#the-back-button) ·
+  [Helpers of your application](#helpers-of-your-application) ·
+  [Deep links](#deep-links) · [Testing](#testing)
 - [Coming from octopus](#coming-from-octopus) ·
   [Design notes](#design-notes)
 
@@ -193,9 +195,10 @@ final confirmed = await context.navigation.pushForResult<bool>(
 );
 ```
 
-`pushForResult` completes with the value passed to `pop`, or with `null` when
-the route is closed in any other way — a tap on the barrier, the system back
-button or a guard. Both mixins tag their routes with `kModalTag` and give
+`pushForResult` completes with the value passed to `pop`, `remove` or the
+familiar `Navigator.pop(context, value)`, or with `null` when the route is
+closed in any other way — a tap on the barrier, the system back button or a
+guard. Both mixins tag their routes with `kModalTag` and give
 them a positive priority, so `controller.removeTag(kModalTag)` closes every
 popup at once and the `PriorityGuard` keeps them above the screens.
 
@@ -443,6 +446,199 @@ NavigationView(
 
 Set `interceptBackButton: false` for a view that must never react to it.
 
+Views nested into the routes of another view — a multi step flow with its own
+navigator, the tabs of a shell screen — are asked first: the press goes to
+the deepest view that is actually visible, and reaches the outer view only
+when the nested one cannot go back any further. A nested view covered by
+another route or by a dialog of the outer navigator never reacts.
+
+When a guard refuses to remove a route the user has just closed (a swipe
+back, the button of an `AppBar`), the route is brought back on screen, so the
+widgets never drift away from the stack of the controller.
+
+## Helpers of your application
+
+Squid adds a single getter to `BuildContext` — `context.navigation`, the raw
+controller. Everything else belongs to the application: its own vocabulary,
+its own shortcuts. The cheapest way to add them is an
+[extension type](https://dart.dev/language/extension-types) over the
+context: a zero cost wrapper that keeps the namespace of `BuildContext`
+clean and can grow helpers squid knows nothing about.
+
+```dart
+extension type AppNavigation(BuildContext _context) {
+  NavigationController get controller => _context.navigation;
+
+  void change(NavigationChange fn) => controller.change(fn);
+
+  void push(NavigationRoute route) => controller.push(route);
+
+  bool pop([Object? result]) => controller.pop(result);
+
+  /// Closes every popup at once, whatever opened it.
+  void popModals() {
+    final controller = _context.maybeNavigation;
+    // The declarative dialogs and sheets.
+    controller?.removeTag(kModalTag);
+    // The imperative ones: showDialog, showModalBottomSheet, showMenu, a
+    // dropdown — on top of the stack or on the root navigator. The page based
+    // popups belong to the controller and are already gone from its stack.
+    final navigators = <NavigatorState>{
+      ?controller?.navigator,
+      ?Navigator.maybeOf(_context, rootNavigator: true),
+    };
+    for (final navigator in navigators) {
+      navigator.popUntil(
+        (route) => route is! PopupRoute || route.settings is Page,
+      );
+    }
+    // The context menu of a text field.
+    ContextMenuController.removeAny();
+  }
+}
+
+extension AppNavigationContext on BuildContext {
+  AppNavigation get nav => AppNavigation(this);
+}
+```
+
+```dart
+context.nav.push(const ProductRoute(42));
+context.nav.change((stack) => stack.withoutType<ProductRoute>());
+context.nav.popModals();
+```
+
+`removeTag(kModalTag)` alone closes only the declarative popups: a
+`showDialog` or a menu is invisible to the controller, so a helper like
+`popModals` is what closes everything — for example before following a push
+notification. Mind the context: `showDialog` opens the dialog on the root
+navigator of the application, above every `NavigationView`, so there is no
+controller in the context of its builder. Call the helper with the context
+of the screen that opened the dialog.
+
+## Deep links
+
+A deep link is just another way to rewrite the stack: parse it into routes,
+put them into the controller, and the guards decide what is actually shown —
+a signed out user still lands on the sign in screen.
+
+The link the application has been launched with is the initial route name of
+the engine: the path of the address bar on the web, and the path of the link
+on Android and iOS once deep linking is enabled for the platform
+(`flutter_deeplinking_enabled`). The links that arrive later are delivered to
+the `WidgetsBindingObserver`s:
+
+```dart
+class _AppState extends State<App> with WidgetsBindingObserver {
+  late final NavigationController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = NavigationController(<NavigationRoute>[Routes.home]);
+    // The link the application has been launched with.
+    final name = WidgetsBinding.instance.platformDispatcher.defaultRouteName;
+    if (name != Navigator.defaultRouteName) _open(Uri.parse(name));
+    // The links that arrive while the application is running.
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Future<bool> didPushRouteInformation(RouteInformation information) =>
+      SynchronousFuture<bool>(_open(information.uri));
+
+  /// Returns `false` for an unknown link, so the platform handles it.
+  bool _open(Uri uri) {
+    final stack = parseDeepLink(uri);
+    if (stack == null) return false;
+    _controller.stack = <NavigationRoute>[Routes.home, ...stack];
+    return true;
+  }
+
+  @override
+  Widget build(BuildContext context) => MaterialApp(
+    // Without these two callbacks `MaterialApp` tries to open the link as a
+    // named route itself and reports that there is no such route.
+    onGenerateInitialRoutes: (_) => <Route<void>>[
+      MaterialPageRoute<void>(
+        builder: (_) => NavigationView(controller: _controller),
+      ),
+    ],
+    onGenerateRoute: (_) => null,
+  );
+}
+```
+
+Squid does not dictate the format of the links — `parseDeepLink` is a plain
+function, and there are three common ways to write it.
+
+**A `switch` over the path segments.** The most readable while the links are
+few: every shape of a link is one line, the arguments are extracted and
+validated in place.
+
+```dart
+NavigationStack? parseDeepLink(Uri uri) => switch (uri.pathSegments) {
+  [] => <NavigationRoute>[],
+  ['settings'] => <NavigationRoute>[Routes.settings],
+  ['product', final id] when int.tryParse(id) != null =>
+    <NavigationRoute>[ProductRoute(int.parse(id))],
+  ['product', final id, 'reviews'] when int.tryParse(id) != null =>
+    <NavigationRoute>[ProductRoute(int.parse(id)), ReviewsRoute(int.parse(id))],
+  _ => null,
+};
+```
+
+**A table of regular expressions.** Handy when the links are many, come from
+the backend or from marketing, and are easier to maintain as data:
+
+```dart
+final List<(RegExp, NavigationStack Function(RegExpMatch match))> table = [
+  (
+    RegExp(r'^/product/(?<id>\d+)/?$'),
+    (match) => <NavigationRoute>[
+      ProductRoute(int.parse(match.namedGroup('id')!)),
+    ],
+  ),
+  (RegExp(r'^/settings/?$'), (_) => <NavigationRoute>[Routes.settings]),
+];
+
+NavigationStack? parseDeepLink(Uri uri) {
+  for (final (pattern, build) in table) {
+    final match = pattern.firstMatch(uri.path);
+    if (match != null) return build(match);
+  }
+  return null;
+}
+```
+
+**Every segment is a route.** `/product-3/product-4/settings` opens the
+product 3, the product 4 above it and the settings on top. Any combination
+of the screens can be linked without declaring it in advance, and the address
+mirrors the stack — exactly what the web expects. A nonsensical combination
+is fixed by the guards, the same way a mistake in the code would be.
+
+```dart
+NavigationStack parseDeepLink(Uri uri) => <NavigationRoute>[
+  for (final segment in uri.pathSegments)
+    ?switch (segment.split('-')) {
+      ['product', final id] when int.tryParse(id) != null =>
+        ProductRoute(int.parse(id)),
+      ['settings'] => Routes.settings,
+      _ => null, // an unknown segment is skipped
+    },
+];
+```
+
+The [example](example/lib/src/deep_links.dart) implements all three for an
+application with tabs, where the first segment selects the tab.
+
 ## Testing
 
 Most of the navigation is tested without a widget tree at all:
@@ -515,8 +711,9 @@ a tabbed shell.
 ## Example
 
 The [example](example) is a small shop with three tabs, an authentication
-gate, a dialog that returns a value, a bottom sheet, cross tab navigation
-and a stack limit — around 500 lines in total.
+gate, a dialog that returns a value, a bottom sheet, cross tab navigation,
+a stack limit, deep links and an application specific `context.nav`
+extension type with `popModals`.
 
 ## Maintainers
 
