@@ -524,14 +524,15 @@ void main() => group('controller', () {
     addTearDown(controller.dispose);
 
     var queued = false;
-    controller.addListener(() {
-      if (queued) return;
-      queued = true;
-      controller
-        ..push(Routes.signIn)
-        ..push(Routes.settings);
-    });
-    controller.push(Routes.catalog);
+    controller
+      ..addListener(() {
+        if (queued) return;
+        queued = true;
+        controller
+          ..push(Routes.signIn)
+          ..push(Routes.settings);
+      })
+      ..push(Routes.catalog);
 
     expect(errors, hasLength(1));
     expect(errors.single, isStateError);
@@ -546,14 +547,15 @@ void main() => group('controller', () {
     addTearDown(controller.dispose);
 
     var queued = false;
-    controller.addListener(() {
-      if (queued) return;
-      queued = true;
-      controller.push(const ProductRoute(1));
-      expect(controller.remove(const ProductRoute(1)), isTrue);
-      controller.push(Routes.settings);
-    });
-    controller.push(Routes.catalog);
+    controller
+      ..addListener(() {
+        if (queued) return;
+        queued = true;
+        controller.push(const ProductRoute(1));
+        expect(controller.remove(const ProductRoute(1)), isTrue);
+        controller.push(Routes.settings);
+      })
+      ..push(Routes.catalog);
 
     expect(
       controller.stack,
@@ -617,13 +619,13 @@ void main() => group('controller', () {
     addTearDown(() => FlutterError.onError = previous);
 
     final observer = _RecordingObserver();
-    late final NavigationController controller;
-    controller = NavigationController(
+    final controller = NavigationController(
       <NavigationRoute>[Routes.home],
       observers: <NavigationObserver>[observer],
-    )..addListener(() => controller.dispose());
-
-    controller.push(Routes.catalog);
+    );
+    controller
+      ..addListener(controller.dispose)
+      ..push(Routes.catalog);
     expect(controller.isDisposed, isTrue);
     expect(observer.changes, isZero);
     expect(observer.added, isEmpty);
@@ -651,8 +653,9 @@ void main() => group('controller', () {
       addTearDown(controller.dispose);
 
       Future<bool>? popped;
-      controller.addListener(() => popped ??= controller.maybePop());
-      controller.pushAll(<NavigationRoute>[Routes.catalog, Routes.settings]);
+      controller
+        ..addListener(() => popped ??= controller.maybePop())
+        ..pushAll(<NavigationRoute>[Routes.catalog, Routes.settings]);
 
       expect(await popped, isTrue);
       expect(
