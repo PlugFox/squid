@@ -95,6 +95,8 @@ class NavigationTabsController<K extends Object>
   }
 
   /// The index of the given tab, handy for a [BottomNavigationBar].
+  ///
+  /// Returns `-1` for a tab that does not belong to this controller.
   int indexOf(K tab) => tabs.keys.toList(growable: false).indexOf(tab);
 
   /// The index of the selected tab.

@@ -311,13 +311,13 @@ void main() => group('controller', () {
     addTearDown(controller.dispose);
 
     var reentered = false;
-    controller.addListener(() {
-      if (reentered) return;
-      reentered = true;
-      controller.push(Routes.settings);
-    });
-
-    controller.push(Routes.catalog);
+    controller
+      ..addListener(() {
+        if (reentered) return;
+        reentered = true;
+        controller.push(Routes.settings);
+      })
+      ..push(Routes.catalog);
     expect(
       controller.stack,
       equals(<NavigationRoute>[Routes.home, Routes.catalog, Routes.settings]),
@@ -334,8 +334,9 @@ void main() => group('controller', () {
     addTearDown(controller.dispose);
 
     var id = 0;
-    controller.addListener(() => controller.push(ProductRoute(id++)));
-    controller.push(Routes.catalog);
+    controller
+      ..addListener(() => controller.push(ProductRoute(id++)))
+      ..push(Routes.catalog);
 
     expect(errors, hasLength(1));
     expect(errors.first, isStateError);
@@ -387,6 +388,122 @@ void main() => group('controller', () {
       equals('NavigationController(main: home > catalog)'),
     );
   });
+
+  test('a pushForResult requested from a listener and rejected completes', () {
+    final controller = NavigationController(
+      <NavigationRoute>[Routes.home],
+      guards: <NavigationGuard>[
+        NavigationGuard((controller, stack) => stack.withoutTag(kModalTag)),
+      ],
+    );
+    addTearDown(controller.dispose);
+
+    Future<bool?>? result;
+    controller
+      ..addListener(
+        () => result ??= controller.pushForResult<bool>(
+          const ConfirmDialogRoute(),
+        ),
+      )
+      ..push(Routes.settings);
+
+    // Completed right after the queue is drained, not only on dispose.
+    expect(result, completion(isNull));
+    expect(controller.top, equals(Routes.settings));
+  });
+
+  test('the result of a pop cancelled by a guard is not reused', () async {
+    final locked = Flag(value: true);
+    final controller = NavigationController(
+      <NavigationRoute>[Routes.home],
+      guards: <NavigationGuard>[
+        NavigationGuard(
+          (controller, stack) =>
+              locked.value &&
+                  !stack.containsTag(kModalTag) &&
+                  controller.stack.containsTag(kModalTag)
+              ? controller.stack
+              : stack,
+        ),
+      ],
+    );
+    addTearDown(controller.dispose);
+
+    final result = controller.pushForResult<bool>(const ConfirmDialogRoute());
+    expect(controller.pop(true), isTrue, reason: 'requested');
+    expect(controller.top, isA<ConfirmDialogRoute>(), reason: 'cancelled');
+
+    locked.value = false;
+    controller.removeTag(kModalTag);
+    expect(await result, isNull, reason: 'the stale `true` is dropped');
+  });
+
+  test('remove completes the future of the removed route only', () async {
+    final controller = NavigationController(<NavigationRoute>[Routes.home]);
+    addTearDown(controller.dispose);
+
+    final product = controller.pushForResult<int>(const ProductRoute(1));
+    final dialog = controller.pushForResult<bool>(const ConfirmDialogRoute());
+
+    expect(controller.remove(const ProductRoute(1), 42), isTrue);
+    expect(controller.remove(const ProductRoute(1), 43), isFalse);
+    expect(await product, equals(42));
+
+    controller.pop(true);
+    expect(await dialog, isTrue);
+  });
+
+  test('a result of the wrong type completes with null', () async {
+    final controller = NavigationController(<NavigationRoute>[Routes.home]);
+    addTearDown(controller.dispose);
+
+    final result = controller.pushForResult<bool>(const ConfirmDialogRoute());
+    controller.pop('not a bool');
+    expect(await result, isNull);
+  });
+
+  test('pushing the same route for a result again releases the first', () {
+    final controller = NavigationController(<NavigationRoute>[Routes.home]);
+    addTearDown(controller.dispose);
+
+    final first = controller.pushForResult<bool>(const ConfirmDialogRoute());
+    final second = controller.pushForResult<bool>(const ConfirmDialogRoute());
+    expect(first, completion(isNull));
+
+    controller.pop(true);
+    expect(second, completion(isTrue));
+  });
+
+  test('pushForResult after dispose completes with null', () async {
+    final controller = NavigationController(<NavigationRoute>[Routes.home])
+      ..dispose();
+    expect(
+      await controller.pushForResult<bool>(const ConfirmDialogRoute()),
+      isNull,
+    );
+  });
+
+  test('disposing the controller from an observer stops the queue', () {
+    final errors = <Object>[];
+    final previous = FlutterError.onError;
+    FlutterError.onError = (details) => errors.add(details.exception);
+    addTearDown(() => FlutterError.onError = previous);
+
+    late final NavigationController controller;
+    controller = NavigationController(
+      <NavigationRoute>[Routes.home],
+      observers: <NavigationObserver>[_DisposingObserver()],
+    );
+    // A change is queued by the listener, then the observer disposes the
+    // controller before the queue is drained.
+    controller
+      ..addListener(() => controller.push(Routes.settings))
+      ..push(Routes.catalog);
+
+    expect(errors, isEmpty);
+    expect(controller.isDisposed, isTrue);
+    expect(controller.top, equals(Routes.catalog));
+  });
 });
 
 class _RecordingObserver with NavigationObserver {
@@ -408,4 +525,13 @@ class _RecordingObserver with NavigationObserver {
   @override
   void onRemove(NavigationController controller, NavigationRoute route) =>
       removed.add(route.name);
+}
+
+class _DisposingObserver with NavigationObserver {
+  @override
+  void onChange(
+    NavigationController controller,
+    NavigationStack previous,
+    NavigationStack next,
+  ) => controller.dispose();
 }

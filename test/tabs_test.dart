@@ -184,4 +184,58 @@ void main() => group('tabs', () {
     await tester.pumpAndSettle();
     expect(find.text('product:7'), findsOneWidget, reason: 'stack survived');
   });
+
+  testWidgets('tabs nested into a route of an outer view', (tester) async {
+    tabs[_Tab.feed].push(Routes.settings);
+    final root = NavigationController(<NavigationRoute>[
+      _ShellRoute(tabs),
+      const ProductRoute(1),
+    ], debugLabel: 'root');
+    addTearDown(root.dispose);
+    await tester.pumpWidget(
+      MaterialApp(home: NavigationView(controller: root)),
+    );
+    await tester.pumpAndSettle();
+
+    // The shell is covered: the outer route is closed first.
+    expect(await tester.binding.handlePopRoute(), isTrue);
+    await tester.pumpAndSettle();
+    expect(root.length, equals(1));
+    expect(tabs[_Tab.feed].length, equals(2), reason: 'untouched');
+
+    // Then the active tab goes back.
+    expect(await tester.binding.handlePopRoute(), isTrue);
+    await tester.pumpAndSettle();
+    expect(tabs[_Tab.feed].length, equals(1));
+
+    // Then the previous tab is restored.
+    tabs.select(_Tab.cart);
+    await tester.pumpAndSettle();
+    expect(await tester.binding.handlePopRoute(), isTrue);
+    expect(tabs.active, equals(_Tab.feed));
+
+    // Nothing is left anywhere: the press bubbles up.
+    expect(await tester.binding.handlePopRoute(), isFalse);
+  });
 });
+
+final class _ShellRoute with NavigationRoute {
+  const _ShellRoute(this.tabs);
+
+  final NavigationTabsController<_Tab> tabs;
+
+  @override
+  LocalKey get key => const ValueKey<String>('shell');
+
+  @override
+  Widget build(BuildContext context) => ListenableBuilder(
+    listenable: tabs,
+    builder: (context, _) => IndexedStack(
+      index: tabs.activeIndex,
+      children: <Widget>[
+        for (final controller in tabs.tabs.values)
+          NavigationView(controller: controller),
+      ],
+    ),
+  );
+}

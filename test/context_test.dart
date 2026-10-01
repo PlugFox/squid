@@ -180,4 +180,85 @@ void main() => group('context', () {
     await tester.pumpAndSettle();
     expect(passes, equals(2));
   });
+
+  for (final layoutBuilder in <bool>[false, true]) {
+    testWidgets(
+      'a guard redirecting during the build does not break an '
+      'ancestor listening to the controller (layoutBuilder: $layoutBuilder)',
+      (tester) async {
+        final controller = NavigationController(
+          <NavigationRoute>[Routes.home],
+          guards: <NavigationGuard>[const _AdaptiveGuard()],
+        );
+        addTearDown(controller.dispose);
+
+        Widget app(double width) {
+          Widget view() => NavigationView(controller: controller);
+          return MaterialApp(
+            home: MediaQuery(
+              data: MediaQueryData(size: Size(width, 600)),
+              // A shell above the view, e.g. a bottom navigation bar.
+              child: ListenableBuilder(
+                listenable: controller,
+                builder: (context, _) => Column(
+                  children: <Widget>[
+                    Text('top:${controller.top.name}'),
+                    Expanded(
+                      child: layoutBuilder
+                          ? LayoutBuilder(builder: (_, _) => view())
+                          : view(),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          );
+        }
+
+        await tester.pumpWidget(app(800));
+        await tester.pumpAndSettle();
+        expect(tester.takeException(), isNull);
+        expect(find.text('top:_SidePaneRoute'), findsOneWidget);
+        expect(find.text('side-pane'), findsOneWidget);
+
+        await tester.pumpWidget(app(300));
+        await tester.pumpAndSettle();
+        expect(tester.takeException(), isNull);
+        expect(find.text('top:home'), findsOneWidget);
+        expect(find.text('side-pane'), findsNothing);
+      },
+    );
+  }
+
+  testWidgets('a page reading the stack follows a build time change '
+      'in the same frame', (tester) async {
+    final controller = NavigationController(
+      <NavigationRoute>[const _StackLengthRoute()],
+      guards: <NavigationGuard>[const _AdaptiveGuard()],
+    );
+    addTearDown(controller.dispose);
+
+    Widget app(double width) => MaterialApp(
+      home: MediaQuery(
+        data: MediaQueryData(size: Size(width, 600)),
+        child: NavigationView(controller: controller),
+      ),
+    );
+
+    await tester.pumpWidget(app(800));
+    await tester.pumpAndSettle();
+    expect(find.text('length:2', skipOffstage: false), findsOneWidget);
+
+    await tester.pumpWidget(app(300));
+    expect(controller.length, equals(1));
+    expect(find.text('length:1'), findsOneWidget, reason: 'the same frame');
+  });
 });
+
+final class _StackLengthRoute with NavigationRoute {
+  const _StackLengthRoute();
+
+  @override
+  Widget build(BuildContext context) =>
+      Text('length:${NavigationScope.stackOf(context).length}');
+}

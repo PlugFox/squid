@@ -93,6 +93,9 @@ class RootGuard implements NavigationGuard {
 /// first. Protects against the loops a user can build by pushing the same
 /// pair of screens over and over again.
 ///
+/// Declare it after the guards that add routes, e.g. after [RootGuard],
+/// otherwise the routes they add are not counted.
+///
 /// ```dart
 /// NavigationController(
 ///   <NavigationRoute>[Routes.home],
@@ -174,6 +177,7 @@ class GateGuard implements NavigationGuard {
   @override
   NavigationStack call(NavigationController controller, NavigationStack stack) {
     if (isOpen()) {
+      if (stack.isEmpty) return opened();
       if (!stack.any((route) => route.tags.contains(tag))) return stack;
       final next = stack
           .where((route) => !route.tags.contains(tag))

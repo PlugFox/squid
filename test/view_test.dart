@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:squid/squid.dart';
@@ -341,6 +343,201 @@ void main() => group('view', () {
       ),
     );
   });
+
+  testWidgets('Navigator.pop(context, result) completes pushForResult', (
+    tester,
+  ) async {
+    final controller = NavigationController(<NavigationRoute>[Routes.home]);
+    addTearDown(controller.dispose);
+    await pumpView(tester, controller);
+
+    final result = controller.pushForResult<String>(const _ImperativeRoute());
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('close'));
+    await tester.pumpAndSettle();
+
+    expect(await result, equals('ok'));
+    expect(controller.stack, equals(<NavigationRoute>[Routes.home]));
+  });
+
+  testWidgets('a removal vetoed by a guard brings the page back', (
+    tester,
+  ) async {
+    final locked = Flag(value: true);
+    final controller = NavigationController(
+      <NavigationRoute>[Routes.home, Routes.settings],
+      guards: <NavigationGuard>[
+        NavigationGuard(
+          (controller, stack) =>
+              locked.value && !stack.contains(Routes.settings)
+              ? controller.stack
+              : stack,
+        ),
+      ],
+    );
+    addTearDown(controller.dispose);
+    await pumpView(tester, controller);
+
+    // The navigator pops the route itself, the guard refuses the removal.
+    await tester.tap(find.byType(BackButton));
+    await tester.pumpAndSettle();
+    expect(controller.top, equals(Routes.settings));
+    expect(find.text('screen:settings'), findsOneWidget);
+
+    // The restored page is a regular route: it can be closed later.
+    locked.value = false;
+    await tester.tap(find.byType(BackButton));
+    await tester.pumpAndSettle();
+    expect(controller.stack, equals(<NavigationRoute>[Routes.home]));
+    expect(find.text('screen:home'), findsOneWidget);
+  });
+
+  testWidgets('the back button goes to the visible nested view first', (
+    tester,
+  ) async {
+    final nested = NavigationController(<NavigationRoute>[
+      Routes.catalog,
+      Routes.settings,
+    ], debugLabel: 'nested');
+    addTearDown(nested.dispose);
+    final root = NavigationController(<NavigationRoute>[
+      Routes.home,
+      _NestedRoute(nested),
+    ], debugLabel: 'root');
+    addTearDown(root.dispose);
+    await pumpView(tester, root);
+    await tester.pumpAndSettle();
+
+    // A step back inside the flow, the flow itself stays open.
+    expect(await tester.binding.handlePopRoute(), isTrue);
+    await tester.pumpAndSettle();
+    expect(nested.stack, equals(<NavigationRoute>[Routes.catalog]));
+    expect(root.length, equals(2));
+
+    // The flow is at its root: the outer view closes the whole flow.
+    expect(await tester.binding.handlePopRoute(), isTrue);
+    await tester.pumpAndSettle();
+    expect(root.stack, equals(<NavigationRoute>[Routes.home]));
+    expect(nested.length, equals(1));
+
+    expect(await tester.binding.handlePopRoute(), isFalse);
+  });
+
+  testWidgets('a nested view covered by a route is skipped', (tester) async {
+    final nested = NavigationController(<NavigationRoute>[
+      Routes.catalog,
+      Routes.settings,
+    ]);
+    addTearDown(nested.dispose);
+    final root = NavigationController(<NavigationRoute>[
+      _NestedRoute(nested),
+      const ProductRoute(1),
+    ]);
+    addTearDown(root.dispose);
+    await pumpView(tester, root);
+    await tester.pumpAndSettle();
+
+    expect(await tester.binding.handlePopRoute(), isTrue);
+    await tester.pumpAndSettle();
+    expect(root.length, equals(1), reason: 'the visible route is closed');
+    expect(nested.length, equals(2), reason: 'the hidden flow is untouched');
+  });
+
+  testWidgets('an imperative dialog above a nested view closes first', (
+    tester,
+  ) async {
+    final nested = NavigationController(<NavigationRoute>[
+      Routes.catalog,
+      Routes.settings,
+    ]);
+    addTearDown(nested.dispose);
+    final root = NavigationController(<NavigationRoute>[_NestedRoute(nested)]);
+    addTearDown(root.dispose);
+    await pumpView(tester, root);
+    await tester.pumpAndSettle();
+
+    // Opened on the outer navigator, it covers the whole nested view.
+    unawaited(
+      showDialog<void>(
+        context: root.navigator!.context,
+        useRootNavigator: false,
+        builder: (context) => const Text('imperative'),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('imperative'), findsOneWidget);
+
+    expect(await tester.binding.handlePopRoute(), isTrue);
+    await tester.pumpAndSettle();
+    expect(find.text('imperative'), findsNothing);
+    expect(nested.length, equals(2), reason: 'untouched');
+  });
+
+  testWidgets('interceptBackButton false disables the nested views too', (
+    tester,
+  ) async {
+    final nested = NavigationController(<NavigationRoute>[
+      Routes.catalog,
+      Routes.settings,
+    ]);
+    addTearDown(nested.dispose);
+    final root = NavigationController(<NavigationRoute>[_NestedRoute(nested)]);
+    addTearDown(root.dispose);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: NavigationView(controller: root, interceptBackButton: false),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(await tester.binding.handlePopRoute(), isFalse);
+    expect(nested.length, equals(2));
+  });
+
+  testWidgets('a nested view moved with a global key keeps working', (
+    tester,
+  ) async {
+    final nested = NavigationController(<NavigationRoute>[
+      Routes.catalog,
+      Routes.settings,
+    ]);
+    addTearDown(nested.dispose);
+    final key = GlobalKey();
+    Widget build({required bool wrapped}) {
+      final view = NavigationView(key: key, controller: nested);
+      return MaterialApp(
+        home: wrapped ? Padding(padding: EdgeInsets.zero, child: view) : view,
+      );
+    }
+
+    await tester.pumpWidget(build(wrapped: false));
+    await tester.pumpWidget(build(wrapped: true));
+    await tester.pumpAndSettle();
+
+    expect(await tester.binding.handlePopRoute(), isTrue);
+    await tester.pumpAndSettle();
+    expect(nested.length, equals(1));
+  });
+
+  testWidgets('a swapped controller is validated with the context', (
+    tester,
+  ) async {
+    final first = NavigationController(<NavigationRoute>[Routes.home]);
+    final second = NavigationController(
+      <NavigationRoute>[Routes.catalog],
+      guards: <NavigationGuard>[const _WidthGuard()],
+    );
+    addTearDown(first.dispose);
+    addTearDown(second.dispose);
+
+    await pumpView(tester, first);
+    expect(second.stack, equals(<NavigationRoute>[Routes.catalog]));
+
+    await pumpView(tester, second);
+    expect(second.top, equals(Routes.settings), reason: 'the guard has run');
+    await tester.pumpAndSettle();
+    expect(find.text('screen:settings'), findsOneWidget);
+  });
 });
 
 final class _CounterRoute with NavigationRoute {
@@ -383,4 +580,37 @@ final class _PusherRoute with NavigationRoute {
       ),
     ),
   );
+}
+
+final class _ImperativeRoute with NavigationRoute, DialogRouteMixin {
+  const _ImperativeRoute();
+
+  @override
+  Widget build(BuildContext context) => TextButton(
+    onPressed: () => Navigator.of(context).pop('ok'),
+    child: const Text('close'),
+  );
+}
+
+final class _NestedRoute with NavigationRoute {
+  const _NestedRoute(this.controller);
+
+  final NavigationController controller;
+
+  @override
+  LocalKey get key => const ValueKey<String>('nested');
+
+  @override
+  Widget build(BuildContext context) => NavigationView(controller: controller);
+}
+
+/// Adds the settings on top of the stack once the window is known.
+class _WidthGuard extends ContextGuard {
+  const _WidthGuard();
+
+  @override
+  NavigationStack guard(BuildContext context, NavigationStack stack) =>
+      MediaQuery.sizeOf(context).width > 0
+      ? stack.withRoute(Routes.settings)
+      : stack;
 }

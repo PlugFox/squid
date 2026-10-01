@@ -54,12 +54,23 @@ class NavigationView extends StatefulWidget {
   /// for example an inactive tab that is kept alive by an [IndexedStack].
   /// Tabs created with a `NavigationTabsController` handle this
   /// automatically.
+  ///
+  /// Nested views are asked first: a press is handled by the deepest visible
+  /// [NavigationView], and only when it cannot go back any further does the
+  /// press reach the view that contains it. A nested view is visible while
+  /// the route that contains it is the current route of the outer
+  /// navigator. Disabling this flag disables the nested views as well.
   final bool interceptBackButton;
 
   /// Overrides the reaction to the system back button.
   ///
   /// Return `true` when the press has been handled, otherwise the press is
   /// passed to the rest of the application and may close it.
+  ///
+  /// Called only when the press reaches this view: it is not called when
+  /// [interceptBackButton] is `false`, when the controller is an inactive
+  /// tab of a `NavigationTabsController`, or when a visible nested view has
+  /// already handled the press.
   final Future<bool> Function(NavigationController controller)?
   onBackButtonPressed;
 
@@ -95,8 +106,24 @@ class NavigationView extends StatefulWidget {
 class _NavigationViewState extends State<NavigationView>
     with WidgetsBindingObserver
     implements NavigationAttachment {
-  /// Observer used to reach the [NavigatorState] without a global key.
-  final NavigatorObserver _spy = NavigatorObserver();
+  /// Observer used to reach the [NavigatorState] without a global key and
+  /// to catch the results of the routes popped by the [Navigator] itself.
+  late final _NavigationViewObserver _spy = _NavigationViewObserver(
+    (key, result) => _popResults[key] = result,
+  );
+
+  /// Results passed to `Navigator.pop`, waiting for [_handleDidRemovePage].
+  final Map<LocalKey, Object?> _popResults = <LocalKey, Object?>{};
+
+  /// The closest [NavigationView] above this one, `null` for a top level
+  /// view, which receives the back button from the [WidgetsBinding].
+  _NavigationViewState? _parent;
+
+  /// The nested views, in the order they were mounted.
+  final List<_NavigationViewState> _children = <_NavigationViewState>[];
+
+  /// The route of the outer navigator this view is shown in.
+  ModalRoute<Object?>? _route;
 
   /// Cache of the pages, so that an unchanged route is not rebuilt.
   final Map<LocalKey, ({NavigationRoute route, Page<Object?> page})> _cache =
@@ -104,9 +131,9 @@ class _NavigationViewState extends State<NavigationView>
 
   late List<NavigatorObserver> _observers;
 
-  /// Whether the stack is being revalidated because the dependencies of this
-  /// element changed. A rebuild is already on its way in that case.
-  bool _revalidating = false;
+  /// The stack rendered by the last build, used to skip the notifications
+  /// about a stack this view has already built.
+  NavigationStack? _built;
 
   @override
   NavigatorState? get navigator => _spy.navigator;
@@ -120,7 +147,42 @@ class _NavigationViewState extends State<NavigationView>
     widget.controller
       ..attach(this)
       ..addListener(_handleStackChanged);
-    WidgetsBinding.instance.addObserver(this);
+    _register();
+  }
+
+  @override
+  void activate() {
+    super.activate();
+    _register();
+  }
+
+  @override
+  void deactivate() {
+    _unregister();
+    super.deactivate();
+  }
+
+  /// Subscribes this view to the back button: either through the closest
+  /// view above, or directly through the [WidgetsBinding].
+  void _register() {
+    final parent = context
+        .getElementForInheritedWidgetOfExactType<_NavigationViewMarker>()
+        ?.widget;
+    if (parent is _NavigationViewMarker) {
+      _parent = parent.state.._children.add(this);
+    } else {
+      WidgetsBinding.instance.addObserver(this);
+    }
+  }
+
+  void _unregister() {
+    final parent = _parent;
+    if (parent == null) {
+      WidgetsBinding.instance.removeObserver(this);
+    } else {
+      parent._children.remove(this);
+      _parent = null;
+    }
   }
 
   @override
@@ -134,12 +196,7 @@ class _NavigationViewState extends State<NavigationView>
     //
     // When no guard reads anything, this element has no dependencies at all
     // and the callback is invoked exactly once, right after the mount.
-    _revalidating = true;
-    try {
-      widget.controller.revalidate();
-    } finally {
-      _revalidating = false;
-    }
+    widget.controller.revalidateDuringBuild();
   }
 
   @override
@@ -156,11 +213,14 @@ class _NavigationViewState extends State<NavigationView>
       ..attach(this)
       ..addListener(_handleStackChanged);
     _cache.clear();
+    _popResults.clear();
+    _built = null;
+    // The guards of the new controller have never seen this context.
+    widget.controller.revalidateDuringBuild();
   }
 
   @override
   void dispose() {
-    WidgetsBinding.instance.removeObserver(this);
     widget.controller
       ..removeListener(_handleStackChanged)
       ..detach(this);
@@ -171,13 +231,30 @@ class _NavigationViewState extends State<NavigationView>
   /* #endregion */
 
   void _handleStackChanged() {
-    if (!mounted || _revalidating) return;
+    if (!mounted || identical(widget.controller.stack, _built)) return;
     setState(() {});
   }
 
   @override
-  Future<bool> didPopRoute() {
-    if (!widget.interceptBackButton) return SynchronousFuture<bool>(false);
+  Future<bool> didPopRoute() => _handleBackButton();
+
+  /// Whether the back button may reach this view: the route of the outer
+  /// navigator that contains it is not covered by anything.
+  bool get _visible => mounted && (_route?.isCurrent ?? true);
+
+  /// Offers the back button to the visible nested views first, then handles
+  /// it with the controller of this view.
+  Future<bool> _handleBackButton() async {
+    final controller = widget.controller;
+    if (!widget.interceptBackButton || !controller.isActiveInGroup) {
+      return false;
+    }
+    for (final child in _children.reversed.toList(growable: false)) {
+      if (!child._visible) continue;
+      if (await child._handleBackButton()) return true;
+    }
+    // The widget may have been updated while the children were asked.
+    if (!mounted) return false;
     final handler = widget.onBackButtonPressed;
     if (handler != null) return handler(widget.controller);
     return widget.controller.maybePop();
@@ -185,16 +262,20 @@ class _NavigationViewState extends State<NavigationView>
 
   /// Called by the [Navigator] when a route has been closed by the user
   /// or by the framework: a swipe back, a tap on the barrier of a dialog,
-  /// the button of an [AppBar].
+  /// the button of an [AppBar], a `Navigator.pop(context, result)`.
   void _handleDidRemovePage(Page<Object?> page) {
     final key = page.key;
     if (key == null) return;
-    widget.controller.removeKey(key);
+    final controller = widget.controller
+      ..removeKey(key, _popResults.remove(key));
+    // A guard has kept the route: the navigator has already dropped it, so
+    // the pages have to be rebuilt to bring it back.
+    if (mounted && controller.containsKey(key)) setState(() {});
   }
 
   /// Converts the routes into pages, reusing the unchanged ones.
   List<Page<Object?>> _buildPages(BuildContext context) {
-    final stack = widget.controller.stack;
+    final stack = _built = widget.controller.stack;
     final keys = <LocalKey>{};
     final pages = <Page<Object?>>[];
     for (final route in stack) {
@@ -215,23 +296,124 @@ class _NavigationViewState extends State<NavigationView>
       pages.add(page);
     }
     _cache.removeWhere((key, _) => !keys.contains(key));
+    _popResults.removeWhere((key, _) => !keys.contains(key));
     return pages;
   }
 
   @override
-  Widget build(BuildContext context) => NavigationScope(
-    controller: widget.controller,
-    child: Navigator(
-      pages: _buildPages(context),
-      onDidRemovePage: _handleDidRemovePage,
-      transitionDelegate: widget.transitionDelegate,
-      observers: _observers,
-      restorationScopeId: widget.restorationScopeId,
-      requestFocus: widget.requestFocus,
-      clipBehavior: widget.clipBehavior,
-      reportsRouteUpdateToEngine: widget.reportsRouteUpdateToEngine,
+  Widget build(BuildContext context) => _NavigationViewMarker(
+    state: this,
+    child: _RouteProbe(
+      onRoute: (route) => _route = route,
+      child: NavigationScope(
+        controller: widget.controller,
+        child: Navigator(
+          pages: _buildPages(context),
+          onDidRemovePage: _handleDidRemovePage,
+          transitionDelegate: widget.transitionDelegate,
+          observers: _observers,
+          restorationScopeId: widget.restorationScopeId,
+          requestFocus: widget.requestFocus,
+          clipBehavior: widget.clipBehavior,
+          reportsRouteUpdateToEngine: widget.reportsRouteUpdateToEngine,
+        ),
+      ),
     ),
   );
+}
+
+/// Links a [NavigationView] with the views nested into its routes.
+class _NavigationViewMarker extends InheritedWidget {
+  const _NavigationViewMarker({required this.state, required super.child});
+
+  final _NavigationViewState state;
+
+  @override
+  bool updateShouldNotify(_NavigationViewMarker oldWidget) => false;
+}
+
+/// Tracks the route of the outer navigator a [NavigationView] is shown in.
+///
+/// A separate element, so that the dependency on the [ModalRoute] does not
+/// re-run the guards of the view on every transition of the outer navigator.
+class _RouteProbe extends StatefulWidget {
+  const _RouteProbe({required this.onRoute, required this.child});
+
+  final ValueChanged<ModalRoute<Object?>?> onRoute;
+
+  final Widget child;
+
+  @override
+  State<_RouteProbe> createState() => _RouteProbeState();
+}
+
+class _RouteProbeState extends State<_RouteProbe> {
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    widget.onRoute(ModalRoute.of(context));
+  }
+
+  @override
+  Widget build(BuildContext context) => widget.child;
+}
+
+/// Catches the results of the routes popped by the [Navigator] itself, e.g.
+/// with `Navigator.pop(context, result)`, before the page is reported as
+/// removed.
+class _NavigationViewObserver extends NavigatorObserver {
+  _NavigationViewObserver(this._onPop);
+
+  final void Function(LocalKey key, Object? result) _onPop;
+
+  @override
+  void didPush(Route<dynamic> route, Route<dynamic>? previousRoute) =>
+      _track(route);
+
+  @override
+  void didReplace({Route<dynamic>? newRoute, Route<dynamic>? oldRoute}) {
+    if (newRoute != null) _track(newRoute);
+  }
+
+  void _track(Route<dynamic> route) {
+    if (route is! ModalRoute<Object?>) return;
+    final key = switch (route.settings) {
+      Page<Object?>(:final key?) => key,
+      _ => null,
+    };
+    if (key == null) return;
+    route.registerPopEntry(_PopResultEntry(key, _onPop));
+  }
+}
+
+/// A [PopEntry] that never blocks the pop and only records its result.
+class _PopResultEntry extends PopEntry<Object?> {
+  _PopResultEntry(this._key, this._onPop);
+
+  final LocalKey _key;
+  final void Function(LocalKey key, Object? result) _onPop;
+
+  @override
+  final ValueListenable<bool> canPopNotifier = const _AlwaysTrue();
+
+  @override
+  void onPopInvokedWithResult(bool didPop, Object? result) {
+    if (didPop) _onPop(_key, result);
+  }
+}
+
+/// A constant `true` that never changes and keeps no listeners.
+class _AlwaysTrue implements ValueListenable<bool> {
+  const _AlwaysTrue();
+
+  @override
+  bool get value => true;
+
+  @override
+  void addListener(VoidCallback listener) {}
+
+  @override
+  void removeListener(VoidCallback listener) {}
 }
 
 /// {@template squid.scope}
@@ -249,11 +431,23 @@ class _NavigationViewState extends State<NavigationView>
 /// {@endtemplate}
 class NavigationScope extends InheritedNotifier<NavigationController> {
   /// {@macro squid.scope}
-  const NavigationScope({
+  NavigationScope({
     required NavigationController controller,
     required super.child,
     super.key,
-  }) : super(notifier: controller);
+  }) : _stack = controller.stack,
+       super(notifier: controller);
+
+  /// The stack at the moment this widget was built.
+  ///
+  /// Lets the dependents follow a stack committed during the build of the
+  /// [NavigationView] in the same frame, before the controller notifies.
+  final NavigationStack _stack;
+
+  @override
+  bool updateShouldNotify(covariant NavigationScope oldWidget) =>
+      !identical(oldWidget._stack, _stack) ||
+      super.updateShouldNotify(oldWidget);
 
   /// The closest controller above [context].
   ///

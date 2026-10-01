@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:collection';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:flutter/widgets.dart';
 import 'package:squid/src/guard.dart';
 import 'package:squid/src/observer.dart';
@@ -136,6 +137,11 @@ class NavigationController
   bool _processing = false;
   bool _disposed = false;
 
+  /// Whether the listeners are notified at the end of the frame instead of
+  /// synchronously, see [revalidateDuringBuild].
+  bool _deferNotifications = false;
+  bool _notificationScheduled = false;
+
   /* #region State */
 
   /// Current navigation stack, an unmodifiable list ordered from the root
@@ -223,6 +229,8 @@ class NavigationController
       // A guard or a listener that changes the stack on every notification
       // would loop forever: stop it instead of freezing the application.
       for (var i = 0; queue != null && queue.isNotEmpty; i++) {
+        // A listener may dispose the controller while it is being notified.
+        if (_disposed) break;
         if (i >= _maxQueuedChanges) {
           _reportError(
             StateError(
@@ -239,6 +247,7 @@ class NavigationController
     } finally {
       _queue = null;
       _processing = false;
+      _settleResults();
     }
   }
 
@@ -248,6 +257,23 @@ class NavigationController
   /// constructor notifies: the user signs in, the subscription status
   /// changes, a feature flag arrives and so on.
   void revalidate() => change((stack) => stack);
+
+  /// Revalidates the stack from the build phase of a widget.
+  ///
+  /// The new stack is committed immediately, so the widget that requested
+  /// the revalidation builds it in the current frame, while the listeners are
+  /// notified at the end of the frame: marking an ancestor of the building
+  /// widget dirty would be an error.
+  @internal
+  void revalidateDuringBuild() {
+    if (_deferNotifications) return revalidate();
+    _deferNotifications = true;
+    try {
+      revalidate();
+    } finally {
+      _deferNotifications = false;
+    }
+  }
 
   /// Adds [route] on top of the stack.
   ///
@@ -273,13 +299,11 @@ class NavigationController
   Future<T?> pushForResult<T extends Object?>(NavigationRoute route) {
     final key = route.key;
     _completers.remove(key)?.complete(null);
+    if (_disposed) return Future<T?>.value();
     final completer = _completers[key] = Completer<Object?>();
+    // A push rejected by a guard is completed with `null` as soon as the
+    // change is committed, see [_settleResults].
     push(route);
-    if (!_processing && !containsKey(key)) {
-      // Rejected by a guard, nothing will ever remove it from the stack.
-      _completers.remove(key);
-      return Future<T?>.value();
-    }
     return completer.future.then<T?>((result) => result is T ? result : null);
   }
 
@@ -294,8 +318,13 @@ class NavigationController
   /// because an empty stack is not allowed.
   bool pop([Object? result]) {
     if (_stack.length < 2) return false;
-    _results[top.key] = result;
-    change((stack) => stack..removeLast());
+    // The result is bound to the route that is actually removed, which is
+    // not necessarily the current top when the call is postponed.
+    change((stack) {
+      if (stack.length < 2) return stack;
+      _results[stack.last.key] = result;
+      return stack..removeLast();
+    });
     return true;
   }
 
@@ -343,8 +372,12 @@ class NavigationController
   /// [pushForResult] future with [result].
   bool removeKey(LocalKey key, [Object? result]) {
     if (!containsKey(key)) return false;
-    _results[key] = result;
-    change((stack) => stack..removeWhere((route) => route.key == key));
+    change((stack) {
+      final length = stack.length;
+      stack.removeWhere((route) => route.key == key);
+      if (stack.length != length) _results[key] = result;
+      return stack;
+    });
     return true;
   }
 
@@ -377,6 +410,11 @@ class NavigationController
   @internal
   void detach(NavigationAttachment attachment) =>
       _attachments.remove(attachment);
+
+  /// Whether this controller may react to the back button: it does not
+  /// belong to a group or it is the active member of its group.
+  @internal
+  bool get isActiveInGroup => _group?.isActiveMember(this) ?? true;
 
   /// Joins a group of controllers, e.g. a set of tabs.
   @internal
@@ -413,7 +451,7 @@ class NavigationController
       List<NavigationRoute>.of(next),
     );
     _completeRemoved(previous, next);
-    notifyListeners();
+    _notifyListeners();
     _notifyObservers(previous, next);
   }
 
@@ -475,6 +513,37 @@ class NavigationController
         continue;
       }
       _completers.remove(key)?.complete(_results.remove(key));
+    }
+  }
+
+  void _notifyListeners() {
+    if (!_deferNotifications) return notifyListeners();
+    if (_notificationScheduled) return;
+    _notificationScheduled = true;
+    SchedulerBinding.instance
+      ..addPostFrameCallback((_) {
+        _notificationScheduled = false;
+        if (!_disposed) notifyListeners();
+      }, debugLabel: 'NavigationController.notifyListeners')
+      ..ensureVisualUpdate();
+  }
+
+  /// Completes the futures of the routes that are not in the stack once all
+  /// the queued changes have been committed, e.g. a [pushForResult] requested
+  /// from a listener and then rejected by a guard, and drops the results that
+  /// were not consumed by any removal.
+  void _settleResults() {
+    _results.clear();
+    if (_completers.isEmpty) return;
+    final keys = <LocalKey>{for (final route in _stack) route.key};
+    final orphans = <Completer<Object?>>[];
+    _completers.removeWhere((key, completer) {
+      if (keys.contains(key)) return false;
+      orphans.add(completer);
+      return true;
+    });
+    for (final completer in orphans) {
+      if (!completer.isCompleted) completer.complete(null);
     }
   }
 
