@@ -6,9 +6,10 @@ import 'package:flutter/material.dart';
 /// This is a plain [List], so any operation you already know works here:
 /// `[...stack, route]`, `stack.where(...)`, `stack.sublist(...)` and so on.
 ///
-/// Routes do not override `==`, so `stack.contains(route)`,
-/// `stack.indexOf(route)` and `stack.remove(route)` compare instances, while
-/// the controller identifies a route by its [NavigationRoute.key]: prefer
+/// [NavigationRoute] does not override `==`, so unless a route class
+/// overrides it, `stack.contains(route)`, `stack.indexOf(route)` and
+/// `stack.remove(route)` compare instances, while the controller always
+/// identifies a route by its [NavigationRoute.key]: prefer
 /// `controller.contains(route)`, `stack.containsKey(route.key)` and
 /// `stack.without(route)` for the routes that are not constants.
 ///

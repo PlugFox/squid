@@ -142,6 +142,9 @@ class NavigationController
   /// committed, completed with `false` when the queue is dropped.
   final List<Completer<bool>> _pendingPops = <Completer<bool>>[];
 
+  /// The [maybePop] calls waiting for the current change to be committed.
+  final List<Completer<void>> _commitWaiters = <Completer<void>>[];
+
   /// Maximum number of changes requested from within a single transition.
   ///
   /// The changes over the limit are reported to `FlutterError` and dropped:
@@ -276,6 +279,13 @@ class NavigationController
       _processing = false;
       _settleResults();
       _settlePendingPops();
+      if (_commitWaiters.isNotEmpty) {
+        final waiters = List<Completer<void>>.of(_commitWaiters);
+        _commitWaiters.clear();
+        for (final completer in waiters) {
+          completer.complete();
+        }
+      }
     }
   }
 
@@ -376,9 +386,18 @@ class NavigationController
   ///
   /// Returns `true` when the back navigation was handled. When called from a
   /// guard, an observer or a listener, the decision is made against the
-  /// stack the pop applies to, once the current change is committed.
+  /// stack the pop applies to, once the current change is committed (and,
+  /// with a mounted [NavigationView], once its pages are rebuilt on the
+  /// next frame).
   Future<bool> maybePop() async {
     if (_disposed) return false;
+    if (_processing && this.navigator != null) {
+      // The navigator shows the stack being committed only once the view
+      // has been rebuilt: ask it after the next frame.
+      await _whenCommitted();
+      await SchedulerBinding.instance.endOfFrame;
+      return maybePop();
+    }
     final group = _group;
     if (group != null && !group.isActiveMember(this)) return false;
     final navigator = this.navigator;
@@ -388,6 +407,14 @@ class NavigationController
       return true;
     }
     return group?.popGroupMember() ?? false;
+  }
+
+  /// Completes once the current change and the changes queued after it
+  /// are committed.
+  Future<void> _whenCommitted() {
+    final completer = Completer<void>();
+    _commitWaiters.add(completer);
+    return completer.future;
   }
 
   /// Queues a pop after the current change and completes with whether it

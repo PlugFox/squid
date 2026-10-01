@@ -294,6 +294,52 @@ void main() => group('back button', () {
     expect(platform.handlesBack, isTrue, reason: 'out of the tabs again');
   });
 
+  testWidgets('removing the last view is reported', (tester) async {
+    final controller = NavigationController(<NavigationRoute>[
+      Routes.home,
+      Routes.catalog,
+    ]);
+    addTearDown(controller.dispose);
+    final visible = ValueNotifier<bool>(true);
+    addTearDown(visible.dispose);
+    final platform = await pumpApp(
+      tester,
+      ValueListenableBuilder<bool>(
+        valueListenable: visible,
+        builder: (context, value, _) => value
+            ? NavigationView(controller: controller)
+            : const Text('no navigation'),
+      ),
+    );
+    expect(platform.handlesBack, isTrue);
+
+    visible.value = false;
+    await tester.pumpAndSettle();
+    expect(find.text('no navigation'), findsOneWidget);
+    expect(platform.handlesBack, isFalse, reason: 'no view is left');
+    expect(await tester.binding.handlePopRoute(), isFalse);
+  });
+
+  testWidgets('maybePop from a listener pops the pages of the new stack', (
+    tester,
+  ) async {
+    final controller = NavigationController(<NavigationRoute>[Routes.home]);
+    addTearDown(controller.dispose);
+    await pumpApp(tester, NavigationView(controller: controller));
+
+    Future<bool>? popped;
+    controller
+      ..addListener(() => popped ??= controller.maybePop())
+      ..pushAll(<NavigationRoute>[Routes.catalog, Routes.settings]);
+    await tester.pumpAndSettle();
+
+    expect(await popped, isTrue);
+    expect(
+      controller.stack,
+      equals(<NavigationRoute>[Routes.home, Routes.catalog]),
+    );
+  });
+
   testWidgets('a guard reading the context does not rebuild the pages', (
     tester,
   ) async {

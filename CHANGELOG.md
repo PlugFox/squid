@@ -11,8 +11,9 @@ All notable changes to this project will be documented in this file.
   blocking the visible route, a previous tab of a
   `NavigationTabsController` or an `onBackButtonPressed` of the view. A
   nested view reports again when its route becomes current again, an
-  inactive tab no longer speaks for the visible one, and a view with
-  `interceptBackButton: false` no longer claims the press.
+  inactive tab no longer speaks for the visible one, a view with
+  `interceptBackButton: false` no longer claims the press, and removing
+  the last view withdraws its claim.
 - **Fixed**: a `NavigationTabsController` reports the back button when it
   is created around mounted views and when it is disposed, so no stale
   claim of a previous tab remains.

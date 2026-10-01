@@ -128,6 +128,10 @@ class _NavigationViewState extends State<NavigationView>
   /// view, which receives the back button from the [WidgetsBinding].
   _NavigationViewState? _parent;
 
+  /// The navigator a top level view is shown in, e.g. the one of the
+  /// `MaterialApp`, which reports the back button once no view is left.
+  NavigatorState? _hostNavigator;
+
   /// The nested views, in the order they were mounted.
   final List<_NavigationViewState> _children = <_NavigationViewState>[];
 
@@ -174,6 +178,7 @@ class _NavigationViewState extends State<NavigationView>
     _unregister();
     // The views left behind may now be the ones handling the back button.
     (parent ?? _roots.firstOrNull)?._reportBackButton();
+    if (parent == null && _roots.isEmpty) _reportNoViewLeft();
     super.deactivate();
   }
 
@@ -186,9 +191,25 @@ class _NavigationViewState extends State<NavigationView>
     if (parent is _NavigationViewMarker) {
       _parent = parent.state.._children.add(this);
     } else {
+      _hostNavigator = Navigator.maybeOf(context);
       _roots.add(this);
       WidgetsBinding.instance.addObserver(this);
     }
+  }
+
+  /// Withdraws the claim of the last top level view: nothing else would
+  /// replace it, so the platform would keep sending the back button to a
+  /// framework that no longer handles it.
+  void _reportNoViewLeft() {
+    final host = _hostNavigator;
+    if (host == null) return;
+    // After the frame: the view may only be moved with a global key.
+    SchedulerBinding.instance.addPostFrameCallback((_) {
+      if (!host.mounted || _roots.isNotEmpty) return;
+      NavigationNotification(
+        canHandlePop: host.canPop(),
+      ).dispatch(host.context);
+    }, debugLabel: 'NavigationView.reportNoViewLeft');
   }
 
   void _unregister() {
