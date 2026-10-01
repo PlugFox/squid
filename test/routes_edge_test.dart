@@ -77,6 +77,21 @@ void main() => group('routes edge cases', () {
       );
     });
 
+    test('the separators of the arguments are escaped', () {
+      const joined = _ArgumentsRoute(<String, Object?>{'q': 'a&b=c'});
+      const split = _ArgumentsRoute(<String, Object?>{'q': 'a', 'b': 'c'});
+      expect(
+        joined.key,
+        equals(const ValueKey<String>('_ArgumentsRoute?q=a%26b%3Dc')),
+      );
+      expect(joined.key, isNot(equals(split.key)));
+      const percent = _ArgumentsRoute(<String, Object?>{'q': '%26'});
+      expect(percent.key, isNot(equals(joined.key)));
+      const nothing = _ArgumentsRoute(<String, Object?>{'id': null});
+      const text = _ArgumentsRoute(<String, Object?>{'id': 'null'});
+      expect(nothing.key, isNot(equals(text.key)));
+    });
+
     test('the arguments are written in their declaration order', () {
       const ab = _ArgumentsRoute(<String, Object?>{'a': 1, 'b': 2});
       const ba = _ArgumentsRoute(<String, Object?>{'b': 2, 'a': 1});
@@ -85,7 +100,7 @@ void main() => group('routes edge cases', () {
       expect(ab.key, isNot(equals(ba.key)));
     });
 
-    test('null, boolean and collection arguments are written as strings', () {
+    test('a null argument has no value, the others are written as strings', () {
       const route = _ArgumentsRoute(<String, Object?>{
         'id': null,
         'flag': true,
@@ -94,9 +109,7 @@ void main() => group('routes edge cases', () {
       expect(
         route.key,
         equals(
-          const ValueKey<String>(
-            '_ArgumentsRoute?id=null&flag=true&ids=[1, 2]',
-          ),
+          const ValueKey<String>('_ArgumentsRoute?id&flag=true&ids=[1, 2]'),
         ),
       );
     });

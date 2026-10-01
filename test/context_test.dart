@@ -230,6 +230,43 @@ void main() => group('context', () {
     );
   }
 
+  testWidgets('an observer marking an ancestor dirty during a build time '
+      'change is notified at the end of the frame', (tester) async {
+    final current = ValueNotifier<String>('');
+    addTearDown(current.dispose);
+    final controller = NavigationController(
+      <NavigationRoute>[Routes.home],
+      guards: <NavigationGuard>[const _AdaptiveGuard()],
+      observers: <NavigationObserver>[_TopObserver(current)],
+    );
+    addTearDown(controller.dispose);
+
+    Widget app(double width) => MaterialApp(
+      home: MediaQuery(
+        data: MediaQueryData(size: Size(width, 600)),
+        child: ValueListenableBuilder<String>(
+          valueListenable: current,
+          builder: (context, top, _) => Column(
+            children: <Widget>[
+              Text('observed:$top'),
+              Expanded(child: NavigationView(controller: controller)),
+            ],
+          ),
+        ),
+      ),
+    );
+
+    await tester.pumpWidget(app(800));
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+    expect(find.text('observed:_SidePaneRoute'), findsOneWidget);
+
+    await tester.pumpWidget(app(300));
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+    expect(find.text('observed:home'), findsOneWidget);
+  });
+
   testWidgets('a page reading the stack follows a build time change '
       'in the same frame', (tester) async {
     final controller = NavigationController(
@@ -261,4 +298,17 @@ final class _StackLengthRoute with NavigationRoute {
   @override
   Widget build(BuildContext context) =>
       Text('length:${NavigationScope.stackOf(context).length}');
+}
+
+class _TopObserver with NavigationObserver {
+  _TopObserver(this.current);
+
+  final ValueNotifier<String> current;
+
+  @override
+  void onChange(
+    NavigationController controller,
+    NavigationStack previous,
+    NavigationStack next,
+  ) => current.value = next.last.name;
 }

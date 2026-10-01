@@ -504,7 +504,133 @@ void main() => group('controller', () {
     expect(controller.isDisposed, isTrue);
     expect(controller.top, equals(Routes.catalog));
   });
+
+  test('a guard returning an empty stack is reported, the queue goes on', () {
+    final errors = <Object>[];
+    final previous = FlutterError.onError;
+    FlutterError.onError = (details) => errors.add(details.exception);
+    addTearDown(() => FlutterError.onError = previous);
+
+    final controller = NavigationController(
+      <NavigationRoute>[Routes.home],
+      guards: <NavigationGuard>[
+        NavigationGuard(
+          (controller, stack) => stack.containsKey(Routes.signIn.key)
+              ? <NavigationRoute>[]
+              : stack,
+        ),
+      ],
+    );
+    addTearDown(controller.dispose);
+
+    var queued = false;
+    controller.addListener(() {
+      if (queued) return;
+      queued = true;
+      controller
+        ..push(Routes.signIn)
+        ..push(Routes.settings);
+    });
+    controller.push(Routes.catalog);
+
+    expect(errors, hasLength(1));
+    expect(errors.single, isStateError);
+    expect(
+      controller.stack,
+      equals(<NavigationRoute>[Routes.home, Routes.catalog, Routes.settings]),
+    );
+  });
+
+  test('pop and remove from a listener see the pending changes', () {
+    final controller = NavigationController(<NavigationRoute>[Routes.home]);
+    addTearDown(controller.dispose);
+
+    var queued = false;
+    controller.addListener(() {
+      if (queued) return;
+      queued = true;
+      controller.push(const ProductRoute(1));
+      expect(controller.remove(const ProductRoute(1)), isTrue);
+      controller.push(Routes.settings);
+    });
+    controller.push(Routes.catalog);
+
+    expect(
+      controller.stack,
+      equals(<NavigationRoute>[Routes.home, Routes.catalog, Routes.settings]),
+    );
+  });
+
+  test('a stale result of a cancelled pop is not used by a queued removal', () {
+    final locked = Flag(value: true);
+    final controller = NavigationController(
+      <NavigationRoute>[Routes.home],
+      guards: <NavigationGuard>[
+        NavigationGuard(
+          (controller, stack) =>
+              locked.value &&
+                  !stack.containsTag(kModalTag) &&
+                  controller.stack.containsTag(kModalTag)
+              ? controller.stack
+              : stack,
+        ),
+      ],
+    );
+    addTearDown(controller.dispose);
+    final result = controller.pushForResult<bool>(const ConfirmDialogRoute());
+
+    // The pop is cancelled, then a removal without a result is queued.
+    controller.change((stack) {
+      controller
+        ..pop(true)
+        ..change((stack) {
+          locked.value = false;
+          return stack.withoutTag(kModalTag);
+        });
+      return stack;
+    });
+
+    expect(controller.top, equals(Routes.home));
+    expect(result, completion(isNull));
+  });
+
+  test('a failed callback does not swallow the other events', () {
+    final errors = <Object>[];
+    final previous = FlutterError.onError;
+    FlutterError.onError = (details) => errors.add(details.exception);
+    addTearDown(() => FlutterError.onError = previous);
+
+    final observer = _ThrowingOnAddObserver();
+    final controller = NavigationController(
+      <NavigationRoute>[Routes.home, Routes.catalog],
+      observers: <NavigationObserver>[observer],
+    );
+    addTearDown(controller.dispose);
+
+    controller.change(
+      (stack) => <NavigationRoute>[Routes.home, Routes.settings, Routes.signIn],
+    );
+
+    expect(errors, hasLength(2));
+    expect(observer.added, equals(<String>['settings', 'signIn']));
+    expect(observer.removed, equals(<String>['catalog']));
+  });
 });
+
+class _ThrowingOnAddObserver with NavigationObserver {
+  final List<String> added = <String>[];
+  final List<String> removed = <String>[];
+
+  @override
+  void onAdd(NavigationController controller, NavigationRoute route) {
+    added.add(route.name);
+    throw StateError('onAdd');
+  }
+
+  @override
+  void onRemove(NavigationController controller, NavigationRoute route) =>
+      removed.add(route.name);
+}
 
 class _RecordingObserver with NavigationObserver {
   final List<String> added = <String>[];

@@ -2,8 +2,65 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## 0.1.1
 
+- **Fixed**: on Android with the predictive back gesture, the back button
+  no longer closes the application when a `NavigationTabsController` can
+  return to the previous tab or a `NavigationView` has its own
+  `onBackButtonPressed`: the view tells the platform that the framework
+  handles the press, and an inactive tab no longer speaks for the visible
+  one.
+- **Fixed**: a page built from the context of the view (the locale, the
+  theme, an inherited scope read in `NavigationRoute.page`) is built again
+  when that context changes instead of being taken from the cache.
+- **Fixed**: the default `key` of a route escapes `%`, `&` and `=` in the
+  arguments and writes a `null` argument without a value, so different
+  arguments, e.g. `{'q': 'a&b=c'}` and `{'q': 'a', 'b': 'c'}`, or `null` and
+  `'null'`, no longer produce the same key.
+- **Fixed**: observers are notified at the end of the frame, together with
+  the listeners, when a `ContextGuard` changes the stack during the build,
+  so an observer calling `setState` no longer throws.
+- **Fixed**: an exception in one callback of an observer no longer swallows
+  the remaining events of the same transition for that observer.
+- **Fixed**: a guard returning an empty stack is reported to `FlutterError`
+  instead of throwing an assertion, which dropped the changes queued after
+  it in a debug build.
+- **Fixed**: `pop` and `removeKey` called from a guard, an observer or a
+  listener are postponed instead of being checked against the stack that is
+  about to change, e.g. `push(route)` followed by `remove(route)`.
+- **Fixed**: the result of a `pop` cancelled by a guard is no longer passed
+  to a later removal of the same route.
+- **Fixed**: a guard disposing the controller no longer leads to a
+  notification of a disposed controller.
+- **Docs**: a guard keeping a route closed by the user brings back a new
+  instance of it, use a `PopScope` to prevent the closing.
+- **Docs**: the name of a class route is minified in an obfuscated build,
+  routes compare by instance in a plain `List`, overridden `tags` must keep
+  `kModalTag`, `pushForResult` completes the previous waiter of the same
+  route with `null`, `controller.stack` while the guards run.
+- **CI**: a manual publication must start from the tag of the version, the
+  pub cache depends on the pubspecs, a `.pubignore` keeps the development
+  files out of the package.
+
+## 0.1.0
+
+- Initial release.
+- `NavigationRoute` — a route is an immutable value: an `enum` value when it
+  has no parameters, a `sealed class` when it has.
+- `NavigationController` — the owner of the stack, usable without any widget,
+  with guards, observers and revalidation built in.
+- `NavigationView` — renders a controller with a `Navigator`, reports the
+  routes closed by the user and handles the system back button.
+- `DialogRouteMixin` and `BottomSheetRouteMixin` — dialogs and bottom sheets
+  as ordinary entries of the navigation stack.
+- `NavigationGuard` with the built-in `PriorityGuard`, `RootGuard`,
+  `LimitGuard` and `GateGuard`.
+- `ContextGuard` — the rules that depend on the widget tree (the size of the
+  window, the theme, an inherited scope) re-run by themselves whenever what
+  they read changes.
+- `NavigationObserver` and `NavigationLogger`.
+- `NavigationTabsController` — several stacks side by side, cross tab
+  navigation and automatic routing of the back button.
 - **Docs**: "Helpers of your application" — an extension type over
   `BuildContext` with application specific shortcuts and `popModals`, which
   closes the declarative and the imperative popups at once.
@@ -40,23 +97,3 @@ All notable changes to this project will be documented in this file.
   `opened()`, the same way a closed gate falls back to `closed()`.
 - **Fixed**: replacing the controller of a `NavigationView` runs its guards
   with the context of the view, so a `ContextGuard` sees it immediately.
-
-## 0.1.0
-
-- Initial release.
-- `NavigationRoute` — a route is an immutable value: an `enum` value when it
-  has no parameters, a `sealed class` when it has.
-- `NavigationController` — the owner of the stack, usable without any widget,
-  with guards, observers and revalidation built in.
-- `NavigationView` — renders a controller with a `Navigator`, reports the
-  routes closed by the user and handles the system back button.
-- `DialogRouteMixin` and `BottomSheetRouteMixin` — dialogs and bottom sheets
-  as ordinary entries of the navigation stack.
-- `NavigationGuard` with the built-in `PriorityGuard`, `RootGuard`,
-  `LimitGuard` and `GateGuard`.
-- `ContextGuard` — the rules that depend on the widget tree (the size of the
-  window, the theme, an inherited scope) re-run by themselves whenever what
-  they read changes.
-- `NavigationObserver` and `NavigationLogger`.
-- `NavigationTabsController` — several stacks side by side, cross tab
-  navigation and automatic routing of the back button.

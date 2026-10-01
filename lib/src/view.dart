@@ -1,4 +1,5 @@
 import 'package:flutter/foundation.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:flutter/widgets.dart';
 import 'package:squid/src/controller.dart';
 import 'package:squid/src/route.dart';
@@ -135,6 +136,8 @@ class _NavigationViewState extends State<NavigationView>
   /// about a stack this view has already built.
   NavigationStack? _built;
 
+  bool _reportScheduled = false;
+
   @override
   NavigatorState? get navigator => _spy.navigator;
 
@@ -196,6 +199,11 @@ class _NavigationViewState extends State<NavigationView>
     //
     // When no guard reads anything, this element has no dependencies at all
     // and the callback is invoked exactly once, right after the mount.
+    //
+    // `NavigationRoute.page` is built with this context too: a page reading
+    // the locale or the theme has to be built again, not taken from the
+    // cache.
+    _cache.clear();
     widget.controller.revalidateDuringBuild();
   }
 
@@ -204,6 +212,12 @@ class _NavigationViewState extends State<NavigationView>
     super.didUpdateWidget(oldWidget);
     if (!identical(widget.observers, oldWidget.observers)) {
       _observers = <NavigatorObserver>[_spy, ...widget.observers];
+    }
+    if (!identical(widget.controller, oldWidget.controller) ||
+        widget.interceptBackButton != oldWidget.interceptBackButton ||
+        (widget.onBackButtonPressed == null) !=
+            (oldWidget.onBackButtonPressed == null)) {
+      _reportBackButton();
     }
     if (identical(widget.controller, oldWidget.controller)) return;
     oldWidget.controller
@@ -260,6 +274,53 @@ class _NavigationViewState extends State<NavigationView>
     return widget.controller.maybePop();
   }
 
+  /// Whether this view handles the back button even when its navigator
+  /// cannot pop: it has its own handler or its tabs return to the previous
+  /// one.
+  bool get _claimsBackButton =>
+      widget.interceptBackButton &&
+      widget.controller.isActiveInGroup &&
+      (widget.onBackButtonPressed != null ||
+          widget.controller.canPopGroupMember);
+
+  /// Tells the platform whether the framework handles the back button.
+  ///
+  /// The navigator reports `canHandlePop: false` when it has a single route,
+  /// so on Android with the predictive back gesture the press would close
+  /// the application without ever reaching [didPopRoute].
+  bool _handleNavigationNotification(NavigationNotification notification) {
+    // An inactive tab kept alive by an `IndexedStack` must not speak for
+    // the visible one.
+    if (widget.interceptBackButton && !widget.controller.isActiveInGroup) {
+      return true;
+    }
+    if (notification.canHandlePop || !_claimsBackButton) return false;
+    const NavigationNotification(canHandlePop: true).dispatch(context);
+    return true;
+  }
+
+  /// Reports the current state of the back button, when it may have changed
+  /// without a change of the navigator, e.g. another tab has been selected.
+  void _reportBackButton() {
+    if (_reportScheduled) return;
+    _reportScheduled = true;
+    SchedulerBinding.instance.addPostFrameCallback((_) {
+      _reportScheduled = false;
+      if (!mounted || !_visible) return;
+      if (!widget.interceptBackButton || !widget.controller.isActiveInGroup) {
+        return;
+      }
+      final canPop = navigator?.canPop() ?? false;
+      NavigationNotification(
+        canHandlePop: canPop || _claimsBackButton,
+      ).dispatch(context);
+    }, debugLabel: 'NavigationView.reportBackButton');
+    SchedulerBinding.instance.ensureVisualUpdate();
+  }
+
+  @override
+  void didChangeGroup() => _reportBackButton();
+
   /// Called by the [Navigator] when a route has been closed by the user
   /// or by the framework: a swipe back, a tap on the barrier of a dialog,
   /// the button of an [AppBar], a `Navigator.pop(context, result)`.
@@ -307,15 +368,18 @@ class _NavigationViewState extends State<NavigationView>
       onRoute: (route) => _route = route,
       child: NavigationScope(
         controller: widget.controller,
-        child: Navigator(
-          pages: _buildPages(context),
-          onDidRemovePage: _handleDidRemovePage,
-          transitionDelegate: widget.transitionDelegate,
-          observers: _observers,
-          restorationScopeId: widget.restorationScopeId,
-          requestFocus: widget.requestFocus,
-          clipBehavior: widget.clipBehavior,
-          reportsRouteUpdateToEngine: widget.reportsRouteUpdateToEngine,
+        child: NotificationListener<NavigationNotification>(
+          onNotification: _handleNavigationNotification,
+          child: Navigator(
+            pages: _buildPages(context),
+            onDidRemovePage: _handleDidRemovePage,
+            transitionDelegate: widget.transitionDelegate,
+            observers: _observers,
+            restorationScopeId: widget.restorationScopeId,
+            requestFocus: widget.requestFocus,
+            clipBehavior: widget.clipBehavior,
+            reportsRouteUpdateToEngine: widget.reportsRouteUpdateToEngine,
+          ),
         ),
       ),
     ),

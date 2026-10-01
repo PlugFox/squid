@@ -39,9 +39,14 @@ jobs:
           flutter pub get
           flutter pub get --directory example
 
+      # Also guards a manual run: it must be started from the tag of the
+      # version, never from a branch.
       - name: 🔢 Check that the tag matches the version
-        if: startsWith(github.ref, 'refs/tags/')
         run: |
+          if [ "${GITHUB_REF_TYPE}" != "tag" ]; then
+            echo "::error::Publish from a tag, not from ${GITHUB_REF}"
+            exit 1
+          fi
           TAG="${GITHUB_REF_NAME}"
           VERSION="$(awk '/^version:/ {print $2; exit}' pubspec.yaml)"
           if [ "$TAG" != "$VERSION" ]; then

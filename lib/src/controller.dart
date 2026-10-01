@@ -30,6 +30,10 @@ abstract interface class NavigationAttachment {
 
   /// Navigator driven by the controller, `null` before the first build.
   NavigatorState? get navigator;
+
+  /// Called when the group of the controller has changed, e.g. another tab
+  /// has been selected, so the widget may handle the back button differently.
+  void didChangeGroup();
 }
 
 /// A group of controllers where only one of them is active at a time.
@@ -45,6 +49,9 @@ abstract interface class NavigationGroup {
   /// Returns `true` when the group switched back to the previously
   /// selected member.
   bool popGroupMember();
+
+  /// Whether [popGroupMember] would switch to another member.
+  bool get canPopGroupMember;
 }
 
 /// {@template squid.controller}
@@ -129,6 +136,10 @@ class NavigationController
   final Map<LocalKey, Object?> _results = <LocalKey, Object?>{};
 
   /// Maximum number of changes requested from within a single transition.
+  ///
+  /// The changes over the limit are reported to `FlutterError` and dropped:
+  /// use [pushAll] or a single [change] instead of many separate calls from
+  /// a listener.
   static const int _maxQueuedChanges = 64;
 
   NavigationStack _stack;
@@ -141,6 +152,11 @@ class NavigationController
   /// synchronously, see [revalidateDuringBuild].
   bool _deferNotifications = false;
   bool _notificationScheduled = false;
+
+  /// Transitions waiting to be reported to the [observers] at the end of the
+  /// frame, see [revalidateDuringBuild].
+  final List<(NavigationStack, NavigationStack)> _deferredObserverEvents =
+      <(NavigationStack, NavigationStack)>[];
 
   /* #region State */
 
@@ -292,6 +308,10 @@ class NavigationController
   /// `null` when the route is closed in any other way: a swipe back, a tap on
   /// the barrier of a dialog, the system back button or a guard.
   ///
+  /// Only one caller can wait for a route: pushing a route with the same
+  /// [NavigationRoute.key] again completes the previous future with `null`
+  /// right away, even though the route stays on the screen.
+  ///
   /// ```dart
   /// final confirmed =
   ///     await controller.pushForResult<bool>(const ConfirmDialog());
@@ -316,8 +336,12 @@ class NavigationController
   ///
   /// Does nothing and returns `false` when there is only one route left,
   /// because an empty stack is not allowed.
+  ///
+  /// When called from a guard, an observer or a listener, the pop is
+  /// postponed until the current change is committed and `true` only means
+  /// that it has been scheduled.
   bool pop([Object? result]) {
-    if (_stack.length < 2) return false;
+    if (!_processing && _stack.length < 2) return false;
     // The result is bound to the route that is actually removed, which is
     // not necessarily the current top when the call is postponed.
     change((stack) {
@@ -370,8 +394,13 @@ class NavigationController
 
   /// Removes the route with the given [key] and completes its
   /// [pushForResult] future with [result].
+  ///
+  /// Returns `false` when the stack has no such route. When called from a
+  /// guard, an observer or a listener, the removal is postponed until the
+  /// current change is committed and `true` only means that it has been
+  /// scheduled.
   bool removeKey(LocalKey key, [Object? result]) {
-    if (!containsKey(key)) return false;
+    if (!_processing && !containsKey(key)) return false;
     change((stack) {
       final length = stack.length;
       stack.removeWhere((route) => route.key == key);
@@ -416,6 +445,19 @@ class NavigationController
   @internal
   bool get isActiveInGroup => _group?.isActiveMember(this) ?? true;
 
+  /// Whether the group of this controller handles a back button press that
+  /// the controller itself cannot handle.
+  @internal
+  bool get canPopGroupMember => _group?.canPopGroupMember ?? false;
+
+  /// Tells the widgets rendering this controller that its group has changed.
+  @internal
+  void didChangeGroup() {
+    for (final attachment in List<NavigationAttachment>.of(_attachments)) {
+      attachment.didChangeGroup();
+    }
+  }
+
   /// Joins a group of controllers, e.g. a set of tabs.
   @internal
   // ignore: use_setters_to_change_properties
@@ -429,30 +471,40 @@ class NavigationController
 
   /// Applies a single change: mutation, guards and commit.
   void _transition(NavigationChange fn) {
-    final previous = _stack;
-    NavigationStack next;
     try {
-      next = fn(List<NavigationRoute>.of(previous));
-    } on Object catch (error, stackTrace) {
-      _reportError(error, stackTrace, 'changing the navigation stack');
-      return;
-    }
-    next = _dedupe(_runGuards(_dedupe(next)));
-    if (next.isEmpty) {
-      assert(
-        false,
-        'The navigation stack of $this cannot be empty, '
-        'the change has been rejected',
+      final previous = _stack;
+      NavigationStack next;
+      try {
+        next = fn(List<NavigationRoute>.of(previous));
+      } on Object catch (error, stackTrace) {
+        _reportError(error, stackTrace, 'changing the navigation stack');
+        return;
+      }
+      next = _dedupe(_runGuards(_dedupe(next)));
+      // A guard may dispose the controller, e.g. on sign out.
+      if (_disposed) return;
+      if (next.isEmpty) {
+        // Reported instead of asserted: an exception here would drop the
+        // changes queued after this one.
+        _reportError(
+          StateError('The navigation stack cannot be empty'),
+          StackTrace.current,
+          'committing a change rejected by the guards',
+        );
+        return;
+      }
+      if (_sameStack(previous, next)) return;
+      _stack = UnmodifiableListView<NavigationRoute>(
+        List<NavigationRoute>.of(next),
       );
-      return;
+      _completeRemoved(previous, next);
+      _notifyListeners();
+      _notifyObservers(previous, next);
+    } finally {
+      // A result belongs to the change that set it: the result of a pop
+      // cancelled by a guard must not leak into a later removal.
+      _results.clear();
     }
-    if (_sameStack(previous, next)) return;
-    _stack = UnmodifiableListView<NavigationRoute>(
-      List<NavigationRoute>.of(next),
-    );
-    _completeRemoved(previous, next);
-    _notifyListeners();
-    _notifyObservers(previous, next);
   }
 
   /// Runs all the guards, skipping the failed ones.
@@ -518,12 +570,26 @@ class NavigationController
 
   void _notifyListeners() {
     if (!_deferNotifications) return notifyListeners();
+    _scheduleNotifications();
+  }
+
+  /// Notifies the listeners and the observers at the end of the frame.
+  void _scheduleNotifications() {
     if (_notificationScheduled) return;
     _notificationScheduled = true;
     SchedulerBinding.instance
       ..addPostFrameCallback((_) {
         _notificationScheduled = false;
-        if (!_disposed) notifyListeners();
+        if (_disposed) return;
+        notifyListeners();
+        final events = List<(NavigationStack, NavigationStack)>.of(
+          _deferredObserverEvents,
+        );
+        _deferredObserverEvents.clear();
+        for (final (previous, next) in events) {
+          if (_disposed) return;
+          _dispatchObservers(previous, next);
+        }
       }, debugLabel: 'NavigationController.notifyListeners')
       ..ensureVisualUpdate();
   }
@@ -549,22 +615,38 @@ class NavigationController
 
   void _notifyObservers(NavigationStack previous, NavigationStack next) {
     if (observers.isEmpty) return;
+    if (!_deferNotifications && _deferredObserverEvents.isEmpty) {
+      return _dispatchObservers(previous, next);
+    }
+    // An observer may mark widgets dirty, which is not allowed during the
+    // build: report the transition at the end of the frame, in order.
+    _deferredObserverEvents.add((previous, next));
+    _scheduleNotifications();
+  }
+
+  void _dispatchObservers(NavigationStack previous, NavigationStack next) {
     final before = <LocalKey>{for (final route in previous) route.key};
     final after = <LocalKey>{for (final route in next) route.key};
     for (final observer in observers) {
-      try {
-        observer.onChange(this, previous, next);
-        for (final route in next) {
-          if (before.contains(route.key)) continue;
-          observer.onAdd(this, route);
-        }
-        for (final route in previous) {
-          if (after.contains(route.key)) continue;
-          observer.onRemove(this, route);
-        }
-      } on Object catch (error, stackTrace) {
-        _reportError(error, stackTrace, 'notifying the observer $observer');
+      // Every callback is isolated, so a failed one does not swallow the
+      // remaining events of the same observer.
+      _notifyObserver(observer, () => observer.onChange(this, previous, next));
+      for (final route in next) {
+        if (before.contains(route.key)) continue;
+        _notifyObserver(observer, () => observer.onAdd(this, route));
       }
+      for (final route in previous) {
+        if (after.contains(route.key)) continue;
+        _notifyObserver(observer, () => observer.onRemove(this, route));
+      }
+    }
+  }
+
+  void _notifyObserver(NavigationObserver observer, void Function() fn) {
+    try {
+      fn();
+    } on Object catch (error, stackTrace) {
+      _reportError(error, stackTrace, 'notifying the observer $observer');
     }
   }
 
@@ -591,6 +673,7 @@ class NavigationController
     }
     _completers.clear();
     _results.clear();
+    _deferredObserverEvents.clear();
     super.dispose();
   }
 

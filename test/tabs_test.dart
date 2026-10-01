@@ -155,6 +155,79 @@ void main() => group('tabs', () {
     expect(tabs.active, equals(_Tab.feed), reason: 'back to the previous tab');
   });
 
+  testWidgets('the platform is told when the tabs handle the back button', (
+    tester,
+  ) async {
+    // On Android the predictive back gesture closes the application on its
+    // own unless the framework claims the press.
+    bool? handlesBack;
+    await tester.pumpWidget(
+      MaterialApp(
+        onNavigationNotification: (notification) {
+          handlesBack = notification.canHandlePop;
+          return true;
+        },
+        home: ListenableBuilder(
+          listenable: tabs,
+          builder: (context, _) => IndexedStack(
+            index: tabs.activeIndex,
+            children: <Widget>[
+              for (final controller in tabs.tabs.values)
+                NavigationView(controller: controller),
+            ],
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(handlesBack, isFalse, reason: 'a single route, no previous tab');
+
+    tabs.select(_Tab.cart);
+    await tester.pumpAndSettle();
+    expect(handlesBack, isTrue, reason: 'returns to the previous tab');
+
+    tabs[_Tab.cart].push(const ProductRoute(1));
+    await tester.pumpAndSettle();
+    expect(handlesBack, isTrue);
+
+    tabs[_Tab.cart].pop();
+    await tester.pumpAndSettle();
+    expect(handlesBack, isTrue, reason: 'still returns to the feed');
+
+    expect(await tester.binding.handlePopRoute(), isTrue);
+    await tester.pumpAndSettle();
+    expect(tabs.active, equals(_Tab.feed));
+    expect(handlesBack, isFalse, reason: 'nothing left to go back to');
+  });
+
+  testWidgets('a view with its own back handler claims the back button', (
+    tester,
+  ) async {
+    final controller = NavigationController(<NavigationRoute>[Routes.home]);
+    addTearDown(controller.dispose);
+    bool? handlesBack;
+    var presses = 0;
+    await tester.pumpWidget(
+      MaterialApp(
+        onNavigationNotification: (notification) {
+          handlesBack = notification.canHandlePop;
+          return true;
+        },
+        home: NavigationView(
+          controller: controller,
+          onBackButtonPressed: (controller) async {
+            presses++;
+            return true;
+          },
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(handlesBack, isTrue);
+    expect(await tester.binding.handlePopRoute(), isTrue);
+    expect(presses, equals(1));
+  });
+
   testWidgets('switching tabs keeps the stack of every tab', (tester) async {
     await tester.pumpWidget(
       MaterialApp(

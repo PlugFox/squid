@@ -6,6 +6,12 @@ import 'package:flutter/material.dart';
 /// This is a plain [List], so any operation you already know works here:
 /// `[...stack, route]`, `stack.where(...)`, `stack.sublist(...)` and so on.
 ///
+/// Routes do not override `==`, so `stack.contains(route)`,
+/// `stack.indexOf(route)` and `stack.remove(route)` compare instances, while
+/// the controller identifies a route by its [NavigationRoute.key]: prefer
+/// `controller.contains(route)`, `stack.containsKey(route.key)` and
+/// `stack.without(route)` for the routes that are not constants.
+///
 /// {@template squid.stack}
 /// The last element is the visible one, the first element is the root of
 /// the navigation. An empty stack is not allowed and will be rejected
@@ -61,6 +67,10 @@ mixin NavigationRoute {
   /// Used for debugging, analytics and as a part of the default [key].
   /// Defaults to the enum value name for enums and to the runtime type
   /// for classes.
+  ///
+  /// The runtime type is minified in an obfuscated build (`--obfuscate`, a
+  /// release build for the web), so a class used for analytics, for logs or
+  /// with `findName` must override this getter with a constant string.
   String get name => switch (this) {
     Enum e => e.name,
     _ => runtimeType.toString(),
@@ -73,7 +83,9 @@ mixin NavigationRoute {
   /// Keys must be unique within a single stack.
   ///
   /// The default value is built from [name] and [arguments], which is enough
-  /// for enums and for parameterless routes. **Routes that carry their
+  /// for enums and for parameterless routes: `name?a=1&b=2`, in the order of
+  /// the entries of the map, with `%`, `&` and `=` escaped and a `null`
+  /// value written as a bare `name?a`. **Routes that carry their
   /// parameters as fields must override this getter**, otherwise all of them
   /// will collide:
   ///
@@ -86,19 +98,28 @@ mixin NavigationRoute {
     if (args.isEmpty) return ValueKey<String>(name);
     final buffer = StringBuffer(name)..write('?');
     var first = true;
-    for (final entry in args.entries) {
+    for (final MapEntry(key: argument, :value) in args.entries) {
       if (first) {
         first = false;
       } else {
         buffer.write('&');
       }
-      buffer
-        ..write(entry.key)
-        ..write('=')
-        ..write(entry.value);
+      buffer.write(_escape(argument));
+      if (value != null) {
+        buffer
+          ..write('=')
+          ..write(_escape(value.toString()));
+      }
     }
     return ValueKey<String>(buffer.toString());
   }
+
+  /// Escapes the separators of the default [key], so that different
+  /// arguments never produce the same key.
+  static String _escape(String value) => value
+      .replaceAll('%', '%25')
+      .replaceAll('&', '%26')
+      .replaceAll('=', '%3D');
 
   /// Arbitrary marks used to address groups of routes declaratively.
   ///
@@ -110,6 +131,11 @@ mixin NavigationRoute {
   /// controller.change((stack) =>
   ///     stack.where((route) => !route.tags.contains('modal')).toList());
   /// ```
+  ///
+  /// [DialogRouteMixin] and [BottomSheetRouteMixin] mark their routes with
+  /// [kModalTag]: a route overriding the tags must keep it,
+  /// `{...super.tags, 'paywall'}`, otherwise `removeTag(kModalTag)` will not
+  /// close it.
   Set<String> get tags => const <String>{};
 
   /// Ordering hint for the [PriorityGuard].
