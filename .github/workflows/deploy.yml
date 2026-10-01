@@ -1,6 +1,9 @@
 name: Deploy
 
 on:
+  # pub.dev rejects a publish started by workflow_dispatch unless
+  # "Enable publishing from workflow_dispatch events" is checked in the
+  # automated publishing settings of the package admin page on pub.dev.
   workflow_dispatch:
   push:
     tags:

@@ -38,6 +38,20 @@ final class _ArgumentsRoute with NavigationRoute {
   Widget build(BuildContext context) => const SizedBox.shrink();
 }
 
+/// A route with the name and the arguments given from the outside.
+final class _NamedRoute with NavigationRoute {
+  const _NamedRoute(this.name, [this.arguments = const <String, Object?>{}]);
+
+  @override
+  final String name;
+
+  @override
+  final Map<String, Object?> arguments;
+
+  @override
+  Widget build(BuildContext context) => const SizedBox.shrink();
+}
+
 /// A generic route: its runtime type includes the type argument.
 final class _Generic<T> with NavigationRoute {
   const _Generic();
@@ -85,11 +99,85 @@ void main() => group('routes edge cases', () {
         equals(const ValueKey<String>('_ArgumentsRoute?q=a%26b%3Dc')),
       );
       expect(joined.key, isNot(equals(split.key)));
-      const percent = _ArgumentsRoute(<String, Object?>{'q': '%26'});
-      expect(percent.key, isNot(equals(joined.key)));
+      for (final (escaped, raw) in const <(String, String)>[
+        ('%26', '&'),
+        ('%3D', '='),
+        ('%3F', '?'),
+        ('%25', '%'),
+      ]) {
+        final percent = _ArgumentsRoute(<String, Object?>{'q': escaped});
+        final separator = _ArgumentsRoute(<String, Object?>{'q': raw});
+        expect(percent.key, isNot(equals(separator.key)), reason: escaped);
+        final percentName = _ArgumentsRoute(<String, Object?>{escaped: 1});
+        final separatorName = _ArgumentsRoute(<String, Object?>{raw: 1});
+        expect(
+          percentName.key,
+          isNot(equals(separatorName.key)),
+          reason: escaped,
+        );
+      }
       const nothing = _ArgumentsRoute(<String, Object?>{'id': null});
       const text = _ArgumentsRoute(<String, Object?>{'id': 'null'});
       expect(nothing.key, isNot(equals(text.key)));
+    });
+
+    test('a "?" in the name does not collide with the arguments', () {
+      expect(
+        const _NamedRoute('a?b', <String, Object?>{'c': 1}).key,
+        isNot(equals(const _NamedRoute('a', <String, Object?>{'b?c': 1}).key)),
+      );
+    });
+
+    test('a name without arguments does not collide with the arguments', () {
+      expect(
+        const _NamedRoute('a?b=c').key,
+        isNot(equals(const _NamedRoute('a', <String, Object?>{'b': 'c'}).key)),
+      );
+      expect(
+        const _NamedRoute('a?b').key,
+        isNot(equals(const _NamedRoute('a', <String, Object?>{'b': null}).key)),
+      );
+    });
+
+    test('the separators in the name do not collide with the arguments', () {
+      expect(
+        const _NamedRoute('a?b&c').key,
+        isNot(
+          equals(
+            const _NamedRoute('a', <String, Object?>{'b': null, 'c': null}).key,
+          ),
+        ),
+      );
+    });
+
+    test('the default key escapes the name and the arguments', () {
+      expect(
+        const _NamedRoute('catalog', <String, Object?>{'id': 1}).key,
+        equals(const ValueKey<String>('catalog?id=1')),
+      );
+      expect(
+        const _NamedRoute('a?b').key,
+        equals(const ValueKey<String>('a%3Fb')),
+      );
+      expect(
+        const _NamedRoute('a?b=c&d%', <String, Object?>{
+          'k?': 'v?',
+          'e': null,
+        }).key,
+        equals(const ValueKey<String>('a%3Fb%3Dc%26d%25?k%3F=v%3F&e')),
+      );
+      expect(
+        const _NamedRoute('a%3Fb').key,
+        isNot(equals(const _NamedRoute('a?b').key)),
+      );
+    });
+
+    test('the values are compared by their string representation', () {
+      // By design: the default key writes every value with toString().
+      expect(
+        const _ArgumentsRoute(<String, Object?>{'x': 1}).key,
+        equals(const _ArgumentsRoute(<String, Object?>{'x': '1'}).key),
+      );
     });
 
     test('the arguments are written in their declaration order', () {

@@ -23,13 +23,24 @@ runs:
         flutter-version: "${{ inputs.flutter-version }}"
         channel: "stable"
 
+    # Without a lockfile the pubspecs alone do not pin the resolved versions:
+    # the week in the key refreshes the cache regularly, and the restore keys
+    # start from the newest cache of the same SDK when a pubspec changes.
+    - name: 🗓️ Compute the cache week
+      id: cache-week
+      shell: bash
+      run: echo "week=$(date -u +%G-W%V)" >> "$GITHUB_OUTPUT"
+
     - name: 📤 Restore Pub modules
       id: cache-pub-restore
       uses: actions/cache/restore@v4
       with:
         path: |
           /home/runner/.pub-cache
-        key: ${{ runner.os }}-pub-${{ inputs.pub-cache }}-${{ hashFiles('pubspec.yaml', 'example/pubspec.yaml') }}
+        key: ${{ runner.os }}-pub-${{ inputs.pub-cache }}-flutter-${{ inputs.flutter-version }}-${{ steps.cache-week.outputs.week }}-${{ hashFiles('pubspec.yaml', 'example/pubspec.yaml') }}
+        restore-keys: |
+          ${{ runner.os }}-pub-${{ inputs.pub-cache }}-flutter-${{ inputs.flutter-version }}-${{ steps.cache-week.outputs.week }}-
+          ${{ runner.os }}-pub-${{ inputs.pub-cache }}-flutter-${{ inputs.flutter-version }}-
 
     - name: 👷 Install Dependencies
       shell: bash
@@ -37,6 +48,7 @@ runs:
         echo /home/runner/.pub-cache/bin >> $GITHUB_PATH
         flutter config --no-cli-animations --no-analytics
         flutter pub get
+        flutter pub get --directory example
 
     #- name: ⏲️ Run build runner
     #  shell: bash

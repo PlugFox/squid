@@ -83,9 +83,18 @@ mixin NavigationRoute {
   /// Keys must be unique within a single stack.
   ///
   /// The default value is built from [name] and [arguments], which is enough
-  /// for enums and for parameterless routes: `name?a=1&b=2`, in the order of
-  /// the entries of the map, with `%`, `&` and `=` escaped and a `null`
-  /// value written as a bare `name?a`. **Routes that carry their
+  /// for enums and for parameterless routes: `name` without arguments,
+  /// `name?a=1&b=2` with them, in the order of the entries of the map, and a
+  /// `null` value written as a bare `name?a`. The name, the argument names
+  /// and the values are escaped (`%` as `%25`, `&` as `%26`, `=` as `%3D`,
+  /// `?` as `%3F`), so a `?`, `&` or `=` inside any of them never collides
+  /// with the separators: `a?b` gives `a%3Fb`, unlike `a` with `{'b': null}`.
+  ///
+  /// Two default keys are equal exactly when the names are equal and the
+  /// arguments have the same names, in the same order, with the same `null`
+  /// values and the same `toString()` of the other values. So
+  /// `{'a': 1, 'b': 2}` and `{'b': 2, 'a': 1}` are different keys, while
+  /// `{'x': 1}` and `{'x': '1'}` are the same one. **Routes that carry their
   /// parameters as fields must override this getter**, otherwise all of them
   /// will collide:
   ///
@@ -95,8 +104,9 @@ mixin NavigationRoute {
   /// ```
   LocalKey get key {
     final args = arguments;
-    if (args.isEmpty) return ValueKey<String>(name);
-    final buffer = StringBuffer(name)..write('?');
+    final escapedName = _escape(name);
+    if (args.isEmpty) return ValueKey<String>(escapedName);
+    final buffer = StringBuffer(escapedName)..write('?');
     var first = true;
     for (final MapEntry(key: argument, :value) in args.entries) {
       if (first) {
@@ -114,12 +124,14 @@ mixin NavigationRoute {
     return ValueKey<String>(buffer.toString());
   }
 
-  /// Escapes the separators of the default [key], so that different
-  /// arguments never produce the same key.
+  /// Escapes the separators of the default [key], so that a separator inside
+  /// the name, an argument name or a value never produces the key of another
+  /// route. `%` goes first, so an already escaped sequence stays distinct.
   static String _escape(String value) => value
       .replaceAll('%', '%25')
       .replaceAll('&', '%26')
-      .replaceAll('=', '%3D');
+      .replaceAll('=', '%3D')
+      .replaceAll('?', '%3F');
 
   /// Arbitrary marks used to address groups of routes declaratively.
   ///
