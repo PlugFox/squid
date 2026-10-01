@@ -762,7 +762,34 @@ class NavigationController
     _completers.clear();
     _results.clear();
     _deferredObserverEvents.clear();
+    // A listener may dispose the controller while it is being notified,
+    // which `ChangeNotifier` does not allow: finish once it is done.
+    if (_notifyingListeners > 0) {
+      _disposePending = true;
+      return;
+    }
     super.dispose();
+  }
+
+  /// The depth of the [notifyListeners] calls in progress.
+  int _notifyingListeners = 0;
+
+  /// Whether [dispose] has been called by a listener and waits for the
+  /// notification to end.
+  bool _disposePending = false;
+
+  @override
+  void notifyListeners() {
+    _notifyingListeners++;
+    try {
+      super.notifyListeners();
+    } finally {
+      _notifyingListeners--;
+      if (_notifyingListeners == 0 && _disposePending) {
+        _disposePending = false;
+        super.dispose();
+      }
+    }
   }
 
   @override

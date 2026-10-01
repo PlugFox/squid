@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:squid/squid.dart';
@@ -338,6 +340,34 @@ void main() => group('back button', () {
       controller.stack,
       equals(<NavigationRoute>[Routes.home, Routes.catalog]),
     );
+  });
+
+  testWidgets('a plain route pushed above a view is reported', (tester) async {
+    final controller = NavigationController(<NavigationRoute>[Routes.home]);
+    addTearDown(controller.dispose);
+    final platform = await pumpApp(
+      tester,
+      NavigationView(controller: controller),
+    );
+    expect(platform.handlesBack, isFalse, reason: 'nothing to pop');
+
+    final app = tester.state<NavigatorState>(find.byType(Navigator).first);
+    unawaited(
+      app.push(MaterialPageRoute<void>(builder: (_) => const Text('plain'))),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('plain'), findsOneWidget);
+    expect(platform.handlesBack, isTrue, reason: 'the app can pop the route');
+
+    // The hidden view reports again.
+    controller.replaceTop(Routes.catalog);
+    await tester.pumpAndSettle();
+    expect(platform.handlesBack, isTrue, reason: 'the app can pop the route');
+
+    expect(await tester.binding.handlePopRoute(), isTrue);
+    await tester.pumpAndSettle();
+    expect(find.text('plain'), findsNothing);
+    expect(platform.handlesBack, isFalse);
   });
 
   testWidgets('a guard reading the context does not rebuild the pages', (

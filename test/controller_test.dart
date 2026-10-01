@@ -626,6 +626,7 @@ void main() => group('controller', () {
     controller
       ..addListener(controller.dispose)
       ..push(Routes.catalog);
+    expect(errors, isEmpty);
     expect(controller.isDisposed, isTrue);
     expect(observer.changes, isZero);
     expect(observer.added, isEmpty);
