@@ -19,6 +19,9 @@ on:
       - "lib/**.dart"
       - "test/**.dart"
       - "example/**.dart"
+      - "example/pubspec.yaml"
+      - "analysis_options.yaml"
+      - ".github/**"
 
 permissions:
   contents: read
@@ -27,9 +30,17 @@ permissions:
 
 jobs:
   checkout:
-    name: "🧪 Check code with analysis, format, and tests"
+    name: "🧪 Check code with analysis, format, and tests (Flutter ${{ matrix.flutter }})"
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        # The minimum version declared in pubspec.yaml and the current one.
+        flutter: ["3.35.0", "3.47.1"]
+        include:
+          - flutter: "3.47.1"
+            latest: true
     defaults:
       run:
         working-directory: ./
@@ -43,7 +54,7 @@ jobs:
       - name: 🚂 Setup Flutter and dependencies
         uses: ./.github/actions/setup
         with:
-          flutter-version: 3.38.0
+          flutter-version: ${{ matrix.flutter }}
 
       - name: 👷 Install Dependencies
         timeout-minutes: 2
@@ -53,6 +64,9 @@ jobs:
 
       - name: 🚦 Check code format
         id: check-format
+        # The formatter evolves between the releases of the SDK: the code is
+        # formatted with the current one.
+        if: ${{ matrix.latest }}
         timeout-minutes: 1
         run: |
           find lib test example/lib example/test -name "*.dart" ! -name "*.*.dart" -print0 | xargs -0 dart format --set-exit-if-changed -o none
@@ -85,6 +99,7 @@ jobs:
 
       - name: 📚 Check the documentation
         id: check-documentation
+        if: ${{ matrix.latest }}
         timeout-minutes: 2
         run: |
           dart doc --dry-run
@@ -92,7 +107,24 @@ jobs:
       - name: 🧪 Unit & Widget tests
         timeout-minutes: 5
         run: |
-          flutter test -r github --concurrency=6 --coverage test/squid_test.dart
+          mkdir -p reports
+          flutter test -r github --file-reporter json:reports/tests.json \
+            --concurrency=6 --coverage test/squid_test.dart
+
+      - name: 📊 Check the coverage
+        timeout-minutes: 1
+        env:
+          MIN_COVERAGE: 95
+        run: |
+          awk -F'[:,]' '/^DA:/ { total++; if ($3 > 0) hit++ }
+            END {
+              coverage = 100 * hit / total
+              printf "Line coverage: %.2f%% (%d of %d lines)\n", coverage, hit, total
+              if (coverage < ENVIRON["MIN_COVERAGE"]) {
+                printf "::error::The coverage %.2f%% is below %s%%\n", coverage, ENVIRON["MIN_COVERAGE"]
+                exit 1
+              }
+            }' coverage/lcov.info
 
       - name: 🧪 Example tests
         timeout-minutes: 5
@@ -101,6 +133,7 @@ jobs:
           flutter test -r github --concurrency=6
 
       - name: 📥 Upload coverage to Codecov
+        if: ${{ matrix.latest }}
         timeout-minutes: 2
         uses: codecov/codecov-action@v4
         with:
@@ -110,10 +143,11 @@ jobs:
 
       - name: 📥 Upload test report
         uses: actions/upload-artifact@v4
-        if: ${{ (success() || failure()) && github.actor != 'dependabot[bot]' }}
+        if: ${{ matrix.latest && (success() || failure()) && github.actor != 'dependabot[bot]' }}
         with:
           name: test-results
           path: reports/tests.json
+          if-no-files-found: ignore
 
       - name: 📤 Check the package before publishing
         id: check-publish

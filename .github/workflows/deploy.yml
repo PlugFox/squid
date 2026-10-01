@@ -30,13 +30,14 @@ jobs:
         uses: subosito/flutter-action@v2
         with:
           channel: stable
-          flutter-version: 3.38.0
+          flutter-version: 3.47.1
 
       - name: 👷 Install dependencies
         timeout-minutes: 2
         run: |
           flutter config --no-cli-animations --no-analytics
           flutter pub get
+          flutter pub get --directory example
 
       - name: 🔢 Check that the tag matches the version
         if: startsWith(github.ref, 'refs/tags/')
@@ -51,13 +52,20 @@ jobs:
       - name: 📈 Check for warnings
         timeout-minutes: 2
         run: |
-          dart format --set-exit-if-changed -o none lib/ test/
+          dart format --set-exit-if-changed -o none lib/ test/ example/lib/ example/test/
           flutter analyze --fatal-infos --fatal-warnings lib/ test/
+          flutter analyze --fatal-infos --fatal-warnings example/
 
       - name: 🧪 Unit & widget tests
         timeout-minutes: 5
         run: |
           flutter test --concurrency=6 test/squid_test.dart
+          cd example && flutter test --concurrency=6
+
+      - name: 🔍 Check the package
+        timeout-minutes: 2
+        run: |
+          flutter pub publish --dry-run
 
       - name: 📤 Publish to pub.dev
         timeout-minutes: 5
