@@ -90,8 +90,91 @@ class CartScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Scaffold(
     appBar: AppBar(title: const Text('Cart')),
-    body: const Center(
-      child: Text('Add a product from the catalog to see it here'),
+    body: Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        spacing: 16,
+        children: <Widget>[
+          const Text('Add a product from the catalog to see it here'),
+          FilledButton(
+            onPressed: () => context.nav.push(Routes.checkout),
+            child: const Text('Checkout'),
+          ),
+        ],
+      ),
+    ),
+  );
+}
+
+/// A flow with a navigator of its own, on top of the cart tab.
+class CheckoutScreen extends StatefulWidget {
+  /// Creates the checkout.
+  const CheckoutScreen({super.key});
+
+  @override
+  State<CheckoutScreen> createState() => _CheckoutScreenState();
+}
+
+class _CheckoutScreenState extends State<CheckoutScreen> {
+  late final NavigationController _checkoutController;
+
+  @override
+  void initState() {
+    super.initState();
+    _checkoutController = NavigationController(<NavigationRoute>[
+      CheckoutStep.address,
+    ], debugLabel: 'checkout');
+  }
+
+  @override
+  void dispose() {
+    _checkoutController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+    // The back button of this app bar belongs to the cart tab: it closes
+    // the whole checkout.
+    appBar: AppBar(title: const Text('Checkout')),
+    body: NavigationView(controller: _checkoutController),
+  );
+}
+
+/// The first step of the checkout.
+class AddressStepScreen extends StatelessWidget {
+  /// Creates the address step.
+  const AddressStepScreen({super.key});
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+    body: Center(
+      child: FilledButton(
+        // The closest navigator is the one of the checkout.
+        onPressed: () => context.nav.push(CheckoutStep.payment),
+        child: const Text('Next'),
+      ),
+    ),
+  );
+}
+
+/// The last step of the checkout.
+class PaymentStepScreen extends StatelessWidget {
+  /// Creates the payment step.
+  const PaymentStepScreen({super.key});
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+    body: Center(
+      child: FilledButton(
+        // The checkout is a route of the cart tab: it is closed in the
+        // navigator of the tab, found by its scope.
+        onPressed: () => NavigationScope.find(
+          context,
+          scope: AppTab.cart,
+        ).remove(Routes.checkout),
+        child: const Text('Pay'),
+      ),
     ),
   );
 }

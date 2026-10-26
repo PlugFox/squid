@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+- **Added**: `NavigationController.scope`, `NavigationScope.find` and
+  `NavigationScope.maybeFind` — a way to reach an outer navigator from a
+  nested one. `context.navigation` and `NavigationScope.of` return only the
+  closest controller, so a screen inside a nested `NavigationView` (a sign
+  in flow, a tab of a shell) could not open a route in an outer view
+  without passing the outer controller down by hand. Now the outer
+  controller gets a `scope`, and any widget below finds it:
+  `NavigationScope.find(context, scope: Scope.root).push(route)`.
+
 ## 0.1.1
 
 - **Fixed**: on Android with the predictive back gesture, the back button

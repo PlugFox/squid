@@ -89,6 +89,7 @@ class NavigationController
     List<NavigationGuard> guards = const <NavigationGuard>[],
     List<NavigationObserver> observers = const <NavigationObserver>[],
     Listenable? revalidate,
+    this.scope,
     this.debugLabel,
   }) : guards = List<NavigationGuard>.unmodifiable(guards),
        observers = List<NavigationObserver>.unmodifiable(observers),
@@ -128,6 +129,10 @@ class NavigationController
 
   /// Observers notified after every committed change of the stack.
   final List<NavigationObserver> observers;
+
+  /// Identifies this controller for `NavigationScope.find`, compared
+  /// with `==`.
+  final Object? scope;
 
   /// Name of this controller, used in logs and in [toString].
   final String? debugLabel;

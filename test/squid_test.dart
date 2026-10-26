@@ -9,6 +9,7 @@ import 'observer_test.dart' as observer_test;
 import 'pages_edge_test.dart' as pages_edge_test;
 import 'route_test.dart' as route_test;
 import 'routes_edge_test.dart' as routes_edge_test;
+import 'scope_test.dart' as scope_test;
 import 'tabs_edge_test.dart' as tabs_edge_test;
 import 'tabs_test.dart' as tabs_test;
 import 'view_test.dart' as view_test;
@@ -28,4 +29,5 @@ void main() {
   routes_edge_test.main();
   tabs_edge_test.main();
   back_button_test.main();
+  scope_test.main();
 }

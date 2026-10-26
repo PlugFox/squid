@@ -23,7 +23,10 @@ enum Routes with NavigationRoute {
   signIn,
 
   /// Regular screen pushed on top of the account tab.
-  settings;
+  settings,
+
+  /// A flow with a navigator of its own, pushed on top of the cart tab.
+  checkout;
 
   /// Marks the screens a signed out user is allowed to see.
   static const String tagUnauthenticated = 'unauthenticated';
@@ -48,6 +51,22 @@ enum Routes with NavigationRoute {
     Routes.account => const AccountScreen(),
     Routes.signIn => const SignInScreen(),
     Routes.settings => const SettingsScreen(),
+    Routes.checkout => const CheckoutScreen(),
+  };
+}
+
+/// The steps of the checkout: the routes of its own navigator.
+enum CheckoutStep with NavigationRoute {
+  /// The first step.
+  address,
+
+  /// The last step.
+  payment;
+
+  @override
+  Widget build(BuildContext context) => switch (this) {
+    CheckoutStep.address => const AddressStepScreen(),
+    CheckoutStep.payment => const PaymentStepScreen(),
   };
 }
 

@@ -7,7 +7,9 @@ A small shop that uses every feature of the package:
 - `lib/src/app.dart` — three tabs, one `NavigationController` each, with the
   guards that keep them consistent.
 - `lib/src/screens.dart` — the screens, including a dialog that returns a
-  value and a product that is added to the stack of another tab.
+  value, a product that is added to the stack of another tab, and a
+  checkout with a navigator of its own that closes itself in the navigator
+  of the cart tab with `NavigationScope.find`.
 - `lib/src/navigation.dart` — `context.nav`, an extension type with the
   navigation shortcuts of the application and `popModals`, which closes the
   declarative and the imperative popups at once.

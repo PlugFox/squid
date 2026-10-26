@@ -131,4 +131,29 @@ void main() => group('example', () {
     // Nothing is left in the stack: the back button has nothing to close.
     expect(await tester.binding.handlePopRoute(), isFalse);
   });
+
+  testWidgets('the checkout closes itself in the navigator of its tab', (
+    tester,
+  ) async {
+    Authentication.instance.signIn();
+    await tester.pumpWidget(const App());
+    await tester.pumpAndSettle();
+    await tester.tap(find.byIcon(Icons.shopping_cart_outlined));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Checkout'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Next'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Pay'));
+    await tester.pumpAndSettle();
+
+    // The whole checkout is gone, not only its last step.
+    expect(find.text('Pay'), findsNothing);
+    expect(find.text('Next'), findsNothing);
+    expect(
+      find.text('Add a product from the catalog to see it here'),
+      findsOneWidget,
+    );
+  });
 });

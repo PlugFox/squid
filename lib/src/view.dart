@@ -674,4 +674,53 @@ class NavigationScope extends InheritedNotifier<NavigationController> {
   /// The widget is rebuilt on every change of the stack.
   static NavigationStack stackOf(BuildContext context) =>
       of(context, listen: true).stack;
+
+  /// The closest controller above [context] whose
+  /// [NavigationController.scope] is [scope].
+  ///
+  /// Pass `listen: true` to rebuild the widget on every change of
+  /// the stack.
+  static NavigationController find(
+    BuildContext context, {
+    required Object scope,
+    bool listen = false,
+  }) {
+    final controller = maybeFind(context, scope: scope, listen: listen);
+    if (controller != null) return controller;
+    throw FlutterError.fromParts(<DiagnosticsNode>[
+      ErrorSummary(
+        'No NavigationScope with the scope $scope found above this widget',
+      ),
+      ErrorHint(
+        'Pass the scope to the NavigationController of a view above this '
+        'widget, or use NavigationScope.maybeFind() to handle its absence.',
+      ),
+      context.describeElement('The context used was'),
+    ]);
+  }
+
+  /// The closest controller above [context] whose
+  /// [NavigationController.scope] is [scope], if there is one.
+  ///
+  /// Pass `listen: true` to rebuild the widget on every change of
+  /// the stack.
+  static NavigationController? maybeFind(
+    BuildContext context, {
+    required Object scope,
+    bool listen = false,
+  }) {
+    InheritedElement? found;
+    context.visitAncestorElements((element) {
+      final widget = element.widget;
+      if (widget is! NavigationScope || widget.notifier?.scope != scope) {
+        return true;
+      }
+      found = element as InheritedElement;
+      return false;
+    });
+    final element = found;
+    if (element == null) return null;
+    if (listen) context.dependOnInheritedElement(element);
+    return (element.widget as NavigationScope).notifier;
+  }
 }

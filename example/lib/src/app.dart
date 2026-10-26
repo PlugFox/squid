@@ -33,6 +33,9 @@ class _AppState extends State<App> with WidgetsBindingObserver {
           tab: NavigationController(
             <NavigationRoute>[_root(tab)],
             debugLabel: tab.name,
+            // A nested navigator inside the tab finds this controller by its
+            // scope, see the checkout.
+            scope: tab,
             // The order matters: every guard receives the result
             // of the previous one.
             guards: <NavigationGuard>[
